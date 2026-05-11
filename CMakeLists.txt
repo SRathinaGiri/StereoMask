@@ -21,6 +21,8 @@ add_executable(StereoMask
     stereoimageprocessor.h
     undocommand.cpp
     undocommand.h
+    resources.qrc
+    icon.rc
 )
 
 target_link_libraries(StereoMask PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core)

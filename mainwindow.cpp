@@ -2,36 +2,154 @@
 #include "stereoviewwidget.h"
 #include <QMenuBar>
 #include <QFileDialog>
-#include <QDockWidget>
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QSlider>
 #include <QActionGroup>
 #include <QToolBar>
-
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QCoreApplication>
+#include <QFile>
+#include <QColorDialog>
+#include <QDialogButtonBox>
+#include <QMessageBox>
+
+void AppSettings::load() {
+    QString path = QCoreApplication::applicationDirPath() + "/settings.json";
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly)) {
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        if (!doc.isNull()) fromJson(doc.object());
+    }
+}
+
+void AppSettings::save() const {
+    QString path = QCoreApplication::applicationDirPath() + "/settings.json";
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(QJsonDocument(toJson()).toJson());
+    }
+}
+
+QJsonObject AppSettings::toJson() const {
+    QJsonObject obj;
+    obj["maskColor"] = maskColor.name();
+    obj["opacity"] = (double)opacity;
+    obj["padx"] = padx;
+    obj["pady"] = pady;
+    obj["bgColor"] = bgColor.name();
+    obj["interleavingSpace"] = interleavingSpace;
+    obj["autoSave"] = autoSave;
+    obj["recentFiles"] = QJsonArray::fromStringList(recentFiles);
+    return obj;
+}
+
+void AppSettings::fromJson(const QJsonObject &obj) {
+    if (obj.contains("maskColor")) maskColor = QColor(obj["maskColor"].toString());
+    if (obj.contains("opacity")) opacity = (float)obj["opacity"].toDouble();
+    if (obj.contains("padx")) padx = obj["padx"].toInt();
+    if (obj.contains("pady")) pady = obj["pady"].toInt();
+    if (obj.contains("bgColor")) bgColor = QColor(obj["bgColor"].toString());
+    if (obj.contains("interleavingSpace")) interleavingSpace = obj["interleavingSpace"].toInt();
+    if (obj.contains("autoSave")) autoSave = obj["autoSave"].toBool();
+    if (obj.contains("recentFiles")) {
+        recentFiles.clear();
+        QJsonArray arr = obj["recentFiles"].toArray();
+        for (const auto &v : arr) recentFiles << v.toString();
+    }
+}
+
+void AppSettings::addRecentFile(const QString &path)
+{
+    recentFiles.removeAll(path);
+    recentFiles.prepend(path);
+    while (recentFiles.size() > 5) recentFiles.removeLast();
+    save();
+}
+
+#include <QStatusBar>
+#include <QJsonArray>
+#include <QScreen>
+#include <QGuiApplication>
+
+class StartupSplash : public QWidget {
+public:
+    StartupSplash(QWidget *parent) : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint) {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_DeleteOnClose);
+        QVBoxLayout *layout = new QVBoxLayout(this);
+        
+        QFrame *frame = new QFrame(this);
+        frame->setStyleSheet("QFrame { background-color: #2c3e50; border: 2px solid #34495e; border-radius: 15px; } QLabel { color: white; border: none; }");
+        QVBoxLayout *fLayout = new QVBoxLayout(frame);
+        
+        QPushButton *closeBtn = new QPushButton("×", frame);
+        closeBtn->setFixedSize(30, 30);
+        closeBtn->setCursor(Qt::PointingHandCursor);
+        closeBtn->setStyleSheet("QPushButton { background: none; border: none; font-size: 24px; color: #95a5a6; } QPushButton:hover { color: #e74c3c; }");
+        connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);
+        
+        QHBoxLayout *topRow = new QHBoxLayout;
+        topRow->addStretch();
+        topRow->addWidget(closeBtn);
+        fLayout->addLayout(topRow);
+
+        QLabel *icon = new QLabel(frame);
+        icon->setPixmap(QIcon(":/app_icon.svg").pixmap(80, 80));
+        icon->setAlignment(Qt::AlignCenter);
+        fLayout->addWidget(icon);
+
+        QLabel *text = new QLabel(tr("<h1>StereoMask v1.1</h1>"
+                                     "<p align='center'><b>Author:</b> S. Rathinagiri</p>"
+                                     "<p align='center'>Developed using <b>GEMINI CLI</b> and Qt6.</p>"), frame);
+        text->setAlignment(Qt::AlignCenter);
+        fLayout->addWidget(text);
+        
+        layout->addWidget(frame);
+        setFixedSize(400, 300);
+        
+        // Robust centering on the primary screen
+        QScreen *screen = QGuiApplication::primaryScreen();
+        if (screen) {
+            QRect screenGeom = screen->geometry();
+            int x = screenGeom.x() + (screenGeom.width() - 400) / 2;
+            int y = screenGeom.y() + (screenGeom.height() - 300) / 2;
+            move(x, y);
+        }
+    }
+};
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    m_settings.load();
     m_viewWidget = new StereoViewWidget(this);
+    m_viewWidget->setMaskSettings(m_settings.maskColor, m_settings.opacity);
+    m_viewWidget->setPaddingSettings(m_settings.padx, m_settings.pady, m_settings.bgColor, m_settings.interleavingSpace);
+    m_viewWidget->setAutoSave(m_settings.autoSave);
     setCentralWidget(m_viewWidget);
 
+    setWindowIcon(QIcon(":/app_icon.svg"));
+
     createMenus();
-    createDockWidgets();
+    createToolbar();
+    statusBar()->showMessage(tr("Ready"));
 
     setWindowTitle(tr("StereoMask - Qt6"));
-    resize(1024, 768);
+    resize(1200, 800);
 
-    connect(m_viewWidget, &StereoViewWidget::selectionChanged, this, [this](int disp){
-        m_disparitySlider->blockSignals(true);
-        m_disparitySpinBox->blockSignals(true);
-        m_disparitySlider->setValue(disp);
-        m_disparitySpinBox->setValue(disp);
-        m_disparitySlider->blockSignals(false);
-        m_disparitySpinBox->blockSignals(false);
+    setupConnections();
+
+    // Show custom startup splash
+    QTimer::singleShot(200, this, [this](){
+        StartupSplash *splash = new StartupSplash(this);
+        splash->show();
+        QTimer::singleShot(3000, splash, &QWidget::close);
     });
 }
 
@@ -39,11 +157,29 @@ MainWindow::~MainWindow()
 {
 }
 
+void MainWindow::setupConnections()
+{
+    connect(m_viewWidget, &StereoViewWidget::selectionChanged, this, [this](int disp){
+        // No toolbar widgets to update anymore
+        Q_UNUSED(disp);
+    });
+}
+
 void MainWindow::createMenus()
 {
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(tr("&Open..."), QKeySequence::Open, this, &MainWindow::openImage);
-    fileMenu->addAction(tr("&Save As..."), QKeySequence::Save, this, &MainWindow::saveImage);
+    fileMenu->addAction(tr("&New Project (Open Image)..."), QKeySequence::New, this, &MainWindow::newProject);
+    fileMenu->addAction(tr("&Open Mask Project..."), QKeySequence::Open, this, &MainWindow::openProject);
+    
+    m_recentFilesMenu = fileMenu->addMenu(tr("Recent Projects"));
+    for (int i = 0; i < 5; ++i) {
+        m_recentFileActions[i] = m_recentFilesMenu->addAction(QString(), this, &MainWindow::openRecentFile);
+        m_recentFileActions[i]->setVisible(false);
+    }
+    updateRecentFileActions();
+
+    fileMenu->addAction(tr("&Save Mask Project"), QKeySequence::Save, this, &MainWindow::saveProject);
+    fileMenu->addAction(tr("&Export Image..."), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E), this, &MainWindow::exportImage);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -55,233 +191,304 @@ void MainWindow::createMenus()
     QAction *redoAction = m_viewWidget->undoStack()->createRedoAction(this, tr("&Redo"));
     redoAction->setShortcut(QKeySequence::Redo);
     editMenu->addAction(redoAction);
-
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
-    QAction *sbsAction = viewMenu->addAction(tr("&Side-by-Side"));
-    sbsAction->setCheckable(true);
-    sbsAction->setChecked(true);
-
-    QAction *anaglyphAction = viewMenu->addAction(tr("&Anaglyph"));
-    anaglyphAction->setCheckable(true);
-
-    QAction *swapAction = viewMenu->addAction(tr("S&wap Sides"));
-    swapAction->setCheckable(true);
-
-    QActionGroup *group = new QActionGroup(this);
-    group->addAction(sbsAction);
-    group->addAction(anaglyphAction);
-
-    connect(anaglyphAction, &QAction::toggled, this, &MainWindow::setAnaglyphMode);
-    connect(swapAction, &QAction::toggled, this, &MainWindow::toggleSwapSides);
 }
 
-void MainWindow::createDockWidgets()
+void MainWindow::updateRecentFileActions()
 {
-    QDockWidget *dock = new QDockWidget(tr("Point Controls"), this);
-    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-
-    QWidget *container = new QWidget;
-    QVBoxLayout *mainLayout = new QVBoxLayout(container);
-
-    QLabel *instr = new QLabel(tr("<b>Instructions:</b><br>"
-                                  "1. Left-click a point to select.<br>"
-                                  "2. Drag with Left-button to move.<br>"
-                                  "3. Right-click on image to add a point.<br>"
-                                  "4. Adjust 'Depth' for the selected point."));
-    instr->setWordWrap(true);
-    mainLayout->addWidget(instr);
-
-    QFormLayout *formLayout = new QFormLayout;
-
-    m_disparitySpinBox = new QSpinBox;
-    m_disparitySpinBox->setRange(-500, 500);
-    formLayout->addRow(tr("Point Depth (Disparity):"), m_disparitySpinBox);
-
-    m_disparitySlider = new QSlider(Qt::Horizontal);
-    m_disparitySlider->setRange(-500, 500);
-    formLayout->addRow(m_disparitySlider);
-
-    QPushButton *clearBtn = new QPushButton(tr("Clear All Points"));
-    connect(clearBtn, &QPushButton::clicked, this, &MainWindow::clearPoints);
-    
-    QPushButton *deleteBtn = new QPushButton(tr("Delete Selected"));
-    deleteBtn->setShortcut(QKeySequence::Delete);
-    connect(deleteBtn, &QPushButton::clicked, [this](){ m_viewWidget->deleteSelectedPoints(); });
-
-    mainLayout->addLayout(formLayout);
-    mainLayout->addWidget(deleteBtn);
-    mainLayout->addWidget(clearBtn);
-    mainLayout->addStretch();
-
-    connect(m_disparitySpinBox, QOverload<int>::of(&QSpinBox::valueChanged), m_disparitySlider, &QSlider::setValue);
-    connect(m_disparitySlider, &QSlider::valueChanged, m_disparitySpinBox, &QSpinBox::setValue);
-    connect(m_disparitySlider, &QSlider::valueChanged, this, &MainWindow::updatePointDisparity);
-
-    dock->setWidget(container);
-    addDockWidget(Qt::RightDockWidgetArea, dock);
-
-    // Alignment Dock
-    QDockWidget *alignDock = new QDockWidget(tr("Alignment"), this);
-    QWidget *alignContainer = new QWidget;
-    QGridLayout *alignLayout = new QGridLayout(alignContainer);
-
-    QPushButton *alignLeftBtn = new QPushButton(tr("Align Left"));
-    QPushButton *alignRightBtn = new QPushButton(tr("Align Right"));
-    QPushButton *alignTopBtn = new QPushButton(tr("Align Top"));
-    QPushButton *alignBottomBtn = new QPushButton(tr("Align Bottom"));
-    QPushButton *alignDepthBtn = new QPushButton(tr("Align Depth"));
-
-    alignLayout->addWidget(alignLeftBtn, 0, 0);
-    alignLayout->addWidget(alignRightBtn, 0, 1);
-    alignLayout->addWidget(alignTopBtn, 1, 0);
-    alignLayout->addWidget(alignBottomBtn, 1, 1);
-    alignLayout->addWidget(alignDepthBtn, 2, 0, 1, 2);
-
-    connect(alignLeftBtn, &QPushButton::clicked, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignLeft); });
-    connect(alignRightBtn, &QPushButton::clicked, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignRight); });
-    connect(alignTopBtn, &QPushButton::clicked, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignTop); });
-    connect(alignBottomBtn, &QPushButton::clicked, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignBottom); });
-    connect(alignDepthBtn, &QPushButton::clicked, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignDepth); });
-
-    alignDock->setWidget(alignContainer);
-    addDockWidget(Qt::RightDockWidgetArea, alignDock);
-
-    // Transform Dock
-    QDockWidget *transDock = new QDockWidget(tr("Mask Transform"), this);
-    QWidget *transContainer = new QWidget;
-    QFormLayout *transLayout = new QFormLayout(transContainer);
-
-    QPushButton *scaleUpBtn = new QPushButton(tr("Scale Up"));
-    QPushButton *scaleDownBtn = new QPushButton(tr("Scale Down"));
-    QPushButton *moveLeftBtn = new QPushButton(tr("Shift Left"));
-    QPushButton *moveRightBtn = new QPushButton(tr("Shift Right"));
-    QPushButton *moveUpBtn = new QPushButton(tr("Shift Up"));
-    QPushButton *moveDownBtn = new QPushButton(tr("Shift Down"));
-
-    transLayout->addRow(scaleUpBtn, scaleDownBtn);
-    transLayout->addRow(moveLeftBtn, moveRightBtn);
-    transLayout->addRow(moveUpBtn, moveDownBtn);
-
-    auto transform = [this](float sx, float sy, float dx, float dy) {
-        m_viewWidget->transformSelectedPoints(sx, sy, dx, dy);
-    };
-
-    connect(scaleUpBtn, &QPushButton::clicked, [transform](){ transform(1.1f, 1.1f, 0, 0); });
-    connect(scaleDownBtn, &QPushButton::clicked, [transform](){ transform(0.9f, 0.9f, 0, 0); });
-    connect(moveLeftBtn, &QPushButton::clicked, [transform](){ transform(1.0f, 1.0f, -10, 0); });
-    connect(moveRightBtn, &QPushButton::clicked, [transform](){ transform(1.0f, 1.0f, 10, 0); });
-    connect(moveUpBtn, &QPushButton::clicked, [transform](){ transform(1.0f, 1.0f, 0, -10); });
-    connect(moveDownBtn, &QPushButton::clicked, [transform](){ transform(1.0f, 1.0f, 0, 10); });
-
-    transDock->setWidget(transContainer);
-    addDockWidget(Qt::RightDockWidgetArea, transDock);
-
-    // ToolBar for Locks
-    QToolBar *lockToolBar = addToolBar(tr("Controls"));
-    QAction *panAction = lockToolBar->addAction(tr("Pan Mode"));
-    panAction->setCheckable(true);
-    panAction->setShortcut(Qt::Key_P);
-    
-    QAction *lockHAction = lockToolBar->addAction(tr("Lock Horizontal"));
-    lockHAction->setCheckable(true);
-    QAction *lockVAction = lockToolBar->addAction(tr("Lock Vertical"));
-    lockVAction->setCheckable(true);
-
-    connect(panAction, &QAction::toggled, this, [this](bool enabled){ m_viewWidget->setPanMode(enabled); });
-    connect(lockHAction, &QAction::toggled, this, [this](bool locked){ m_viewWidget->setLockHorizontal(locked); });
-    connect(lockVAction, &QAction::toggled, this, [this](bool locked){ m_viewWidget->setLockVertical(locked); });
-}
-
-#include <QMessageBox>
-
-void MainWindow::openImage()
-{
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Open Stereo Image"), "", tr("Images (*.png *.jpg *.jpeg *.bmp)"));
-    if (!fileName.isEmpty()) {
-        if (!m_viewWidget->loadImage(fileName)) {
-            QMessageBox::critical(this, tr("Error"), tr("Could not load image: %1\n\nReason: %2").arg(fileName, m_viewWidget->lastError()));
+    for (int i = 0; i < 5; ++i) {
+        if (i < m_settings.recentFiles.size()) {
+            QString text = QString("&%1 %2").arg(i + 1).arg(QFileInfo(m_settings.recentFiles[i]).fileName());
+            m_recentFileActions[i]->setText(text);
+            m_recentFileActions[i]->setData(m_settings.recentFiles[i]);
+            m_recentFileActions[i]->setVisible(true);
+        } else {
+            m_recentFileActions[i]->setVisible(false);
         }
     }
 }
 
-#include <QDialog>
-#include <QColorDialog>
-#include <QDialogButtonBox>
+void MainWindow::openRecentFile()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (action) {
+        QString path = action->data().toString();
+        if (m_viewWidget->loadProject(path)) {
+            m_settings.addRecentFile(path);
+            updateRecentFileActions();
+            statusBar()->showMessage(tr("Project loaded: %1").arg(QFileInfo(path).fileName()), 5000);
+        } else {
+            QMessageBox::critical(this, tr("Error"), tr("Could not load project: %1").arg(m_viewWidget->lastError()));
+            m_settings.recentFiles.removeAll(path);
+            m_settings.save();
+            updateRecentFileActions();
+        }
+    }
+}
 
-class ExportDialog : public QDialog {
+void MainWindow::createToolbar()
+{
+    QToolBar *tb = addToolBar(tr("Main Toolbar"));
+    tb->setMovable(false);
+    tb->setIconSize(QSize(24, 24));
+    tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); // Ensures both text/emoji and icon space are handled well
+
+    auto addBtn = [&](const QString &text, const char* member, const QString &tip, bool checkable = false) {
+        QAction *a = tb->addAction(text, this, member);
+        a->setToolTip(tip);
+        a->setCheckable(checkable);
+        return a;
+    };
+
+    // --- File Group ---
+    addBtn("📄", SLOT(newProject()), tr("New Project (Open Image)"));
+    addBtn("📂", SLOT(openProject()), tr("Open Mask Project (.msk)"));
+    addBtn("💾", SLOT(saveProject()), tr("Save Mask Project (Ctrl+S)"));
+    addBtn("🖼️", SLOT(exportImage()), tr("Export Masked Image"));
+    tb->addSeparator();
+
+    // --- Edit Group ---
+    QAction *undo = m_viewWidget->undoStack()->createUndoAction(this, "↩️");
+    undo->setToolTip(tr("Undo"));
+    tb->addAction(undo);
+    
+    QAction *redo = m_viewWidget->undoStack()->createRedoAction(this, "↪️");
+    redo->setToolTip(tr("Redo"));
+    tb->addAction(redo);
+    
+    tb->addAction("🗑️", [this](){ m_viewWidget->deleteSelectedPoints(); })->setToolTip(tr("Delete Selected"));
+    tb->addAction("🧹", this, SLOT(clearPoints()))->setToolTip(tr("Clear All Points"));
+    tb->addSeparator();
+
+    // --- View Group ---
+    QAction *anaglyph = addBtn("🎨", SLOT(setAnaglyphMode(bool)), tr("Toggle Anaglyph"), true);
+    connect(anaglyph, &QAction::toggled, this, &MainWindow::setAnaglyphMode);
+    
+    QAction *swap = addBtn("↔️", SLOT(toggleSwapSides(bool)), tr("Swap Left/Right"), true);
+    connect(swap, &QAction::toggled, this, &MainWindow::toggleSwapSides);
+    
+    QAction *pan = addBtn("🖱️", nullptr, tr("Pan Mode (P)"), true);
+    pan->setShortcut(Qt::Key_P);
+    connect(pan, &QAction::toggled, m_viewWidget, &StereoViewWidget::setPanMode);
+    tb->addSeparator();
+
+    // --- Lock Group ---
+    QAction *lockH = addBtn("🔒H", nullptr, tr("Lock Horizontal"), true);
+    connect(lockH, &QAction::toggled, m_viewWidget, &StereoViewWidget::setLockHorizontal);
+
+    QAction *lockV = addBtn("🔒V", nullptr, tr("Lock Vertical"), true);
+    connect(lockV, &QAction::toggled, m_viewWidget, &StereoViewWidget::setLockVertical);
+    tb->addSeparator();
+
+    // --- Align Group ---
+    tb->addAction("⬅️", [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignLeft); })->setToolTip(tr("Align Left"));
+    tb->addAction("➡️", [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignRight); })->setToolTip(tr("Align Right"));
+    tb->addAction("⬆️", [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignTop); })->setToolTip(tr("Align Top"));
+    tb->addAction("⬇️", [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignBottom); })->setToolTip(tr("Align Bottom"));
+    tb->addAction("📏", [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignDepth); })->setToolTip(tr("Align Depth"));
+    tb->addSeparator();
+
+    // --- Transform Group ---
+    tb->addAction("➕", [this](){ m_viewWidget->transformSelectedPoints(1.1f, 1.1f, 0, 0); })->setToolTip(tr("Scale Up"));
+    tb->addAction("➖", [this](){ m_viewWidget->transformSelectedPoints(0.9f, 0.9f, 0, 0); })->setToolTip(tr("Scale Down"));
+    tb->addAction("⇇", [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, -10, 0); })->setToolTip(tr("Shift Left"));
+    tb->addAction("⇉", [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 10, 0); })->setToolTip(tr("Shift Right"));
+    tb->addAction("⇈", [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 0, -10); })->setToolTip(tr("Shift Up"));
+    tb->addAction("⇊", [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 0, 10); })->setToolTip(tr("Shift Down"));
+    tb->addSeparator();
+
+    // --- App Group ---
+    addBtn("⚙️", SLOT(showSettings()), tr("Mask Settings"));
+    addBtn("❓", SLOT(showHelp()), tr("Help / Shortcuts"));
+    addBtn("ℹ️", SLOT(showAbout()), tr("About StereoMask"));
+}
+
+#include <QCheckBox>
+
+class SettingsDialog : public QDialog {
 public:
-    ExportDialog(QWidget *parent = nullptr) : QDialog(parent) {
-        setWindowTitle(tr("Export Masked Image"));
+    SettingsDialog(AppSettings &s, QWidget *parent = nullptr) : QDialog(parent), m_settings(s) {
+        setWindowTitle(tr("Mask Settings"));
         QFormLayout *layout = new QFormLayout(this);
 
         m_maskColorBtn = new QPushButton(tr("Select Color..."));
-        m_maskColor = Qt::black;
+        updateColorBtn(m_maskColorBtn, m_settings.maskColor);
         connect(m_maskColorBtn, &QPushButton::clicked, [this](){
-            QColor c = QColorDialog::getColor(m_maskColor, this);
-            if (c.isValid()) m_maskColor = c;
+            QColor c = QColorDialog::getColor(m_settings.maskColor, this);
+            if (c.isValid()) { m_settings.maskColor = c; updateColorBtn(m_maskColorBtn, c); }
         });
         layout->addRow(tr("Mask Color:"), m_maskColorBtn);
 
         m_opacitySpin = new QSpinBox;
         m_opacitySpin->setRange(0, 100);
-        m_opacitySpin->setValue(60);
+        m_opacitySpin->setValue(m_settings.opacity * 100);
         m_opacitySpin->setSuffix("%");
         layout->addRow(tr("Mask Opacity:"), m_opacitySpin);
 
         m_padxSpin = new QSpinBox;
         m_padxSpin->setRange(0, 2000);
-        m_padxSpin->setValue(0);
+        m_padxSpin->setValue(m_settings.padx);
         m_padxSpin->setSuffix(" px");
         layout->addRow(tr("Horizontal Padding:"), m_padxSpin);
 
         m_padySpin = new QSpinBox;
         m_padySpin->setRange(0, 2000);
-        m_padySpin->setValue(0);
+        m_padySpin->setValue(m_settings.pady);
         m_padySpin->setSuffix(" px");
         layout->addRow(tr("Vertical Padding:"), m_padySpin);
 
+        m_interleavingSpin = new QSpinBox;
+        m_interleavingSpin->setRange(0, 2000);
+        m_interleavingSpin->setValue(m_settings.interleavingSpace);
+        m_interleavingSpin->setSuffix(" px");
+        layout->addRow(tr("Interleaving Space:"), m_interleavingSpin);
+
         m_bgColorBtn = new QPushButton(tr("Select Color..."));
-        m_bgColor = Qt::white;
+        updateColorBtn(m_bgColorBtn, m_settings.bgColor);
         connect(m_bgColorBtn, &QPushButton::clicked, [this](){
-            QColor c = QColorDialog::getColor(m_bgColor, this);
-            if (c.isValid()) m_bgColor = c;
+            QColor c = QColorDialog::getColor(m_settings.bgColor, this);
+            if (c.isValid()) { m_settings.bgColor = c; updateColorBtn(m_bgColorBtn, c); }
         });
         layout->addRow(tr("Background Color:"), m_bgColorBtn);
 
+        m_autoSaveCheck = new QCheckBox(tr("AutoSave Project Changes"));
+        m_autoSaveCheck->setChecked(m_settings.autoSave);
+        layout->addRow(m_autoSaveCheck);
+
         QDialogButtonBox *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        connect(bbox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(bbox, &QDialogButtonBox::accepted, [this](){
+            m_settings.opacity = m_opacitySpin->value() / 100.0f;
+            m_settings.padx = m_padxSpin->value();
+            m_settings.pady = m_padySpin->value();
+            m_settings.interleavingSpace = m_interleavingSpin->value();
+            m_settings.autoSave = m_autoSaveCheck->isChecked();
+            accept();
+        });
         connect(bbox, &QDialogButtonBox::rejected, this, &QDialog::reject);
         layout->addRow(bbox);
     }
 
-    QColor maskColor() const { return m_maskColor; }
-    float opacity() const { return m_opacitySpin->value() / 100.0f; }
-    int padx() const { return m_padxSpin->value(); }
-    int pady() const { return m_padySpin->value(); }
-    QColor bgColor() const { return m_bgColor; }
-
 private:
+    void updateColorBtn(QPushButton *btn, const QColor &c) {
+        btn->setStyleSheet(QString("background-color: %1;").arg(c.name()));
+    }
+    AppSettings &m_settings;
     QPushButton *m_maskColorBtn, *m_bgColorBtn;
-    QSpinBox *m_opacitySpin, *m_padxSpin, *m_padySpin;
-    QColor m_maskColor, m_bgColor;
+    QSpinBox *m_opacitySpin, *m_padxSpin, *m_padySpin, *m_interleavingSpin;
+    QCheckBox *m_autoSaveCheck;
 };
 
-void MainWindow::saveImage()
+void MainWindow::showSettings()
+{
+    // Initialize dialog with CURRENT widget settings (which might have been loaded from a project)
+    m_settings.maskColor = m_viewWidget->maskColor();
+    m_settings.opacity = m_viewWidget->maskOpacity();
+    m_settings.padx = m_viewWidget->padx();
+    m_settings.pady = m_viewWidget->pady();
+    m_settings.bgColor = m_viewWidget->bgColor();
+    m_settings.interleavingSpace = m_viewWidget->interleavingSpace();
+
+    SettingsDialog dlg(m_settings, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        m_settings.save(); // Save to global settings.json
+        m_viewWidget->setMaskSettings(m_settings.maskColor, m_settings.opacity);
+        m_viewWidget->setPaddingSettings(m_settings.padx, m_settings.pady, m_settings.bgColor, m_settings.interleavingSpace);
+        m_viewWidget->setAutoSave(m_settings.autoSave);
+        statusBar()->showMessage(tr("Settings updated"), 3000);
+    }
+}
+
+void MainWindow::showHelp()
+{
+    QMessageBox::information(this, tr("Help & Shortcuts"),
+        tr("<h3>Toolbar Icons:</h3>"
+           "📄 <b>New Project:</b> Start with a new image.<br>"
+           "📂 <b>Open Project:</b> Load an existing .msk file.<br>"
+           "💾 <b>Save Project:</b> Manually save current points (Ctrl+S).<br>"
+           "🖼️ <b>Export:</b> Render the final masked image.<br>"
+           "↩️/↪️ <b>Undo/Redo:</b> Standard edit history.<br>"
+           "🎨 <b>Anaglyph:</b> Toggle 3D anaglyph preview.<br>"
+           "↔️ <b>Swap Sides:</b> Swap Left/Right eye views.<br>"
+           "🖱️ <b>Pan Mode:</b> Move image view (Shortcut: P).<br>"
+           "🔒H/V: Lock point movement horizontally or vertically.<br>"
+           "⬅️➡️⬆️⬇️📏: Align selected points.<br>"
+           "➕➖⇇⇉⇈⇊: Transform/Shift selected points.<br>"
+           "⚙️ <b>Settings:</b> Configure colors, padding, and AutoSave.<br>"
+           "<br><h3>Shortcuts:</h3>"
+           "<b>Right-Click:</b> Add new point.<br>"
+           "<b>Left-Drag:</b> Move points or selection box.<br>"
+           "<b>Shift + Left-Drag:</b> Adjust point depth (Disparity).<br>"
+           "<b>Ctrl + Left-Click:</b> Multi-select points.<br>"
+           "<b>Del:</b> Delete selected points."));
+}
+
+void MainWindow::showAbout()
+{
+    QMessageBox::about(this, tr("About StereoMask"),
+        tr("<h2>StereoMask v1.1</h2>"
+           "<p>A precision masking tool for side-by-side stereo images.</p>"
+           "<p><b>Author:</b> S. Rathinagiri</p>"
+           "<p>Developed using <b>GEMINI CLI</b> and Qt6.</p>"
+           "<p>Built with ❤️ for the stereo photography community.</p>"));
+}
+
+void MainWindow::newProject()
+{
+    QString fileName = QFileDialog::getOpenFileName(this, tr("New Project (Open Image)"), "", tr("Images (*.png *.jpg *.jpeg *.bmp)"));
+    if (!fileName.isEmpty()) {
+        if (m_viewWidget->loadImage(fileName)) {
+            QFileInfo info(fileName);
+            QString mskPath = info.absolutePath() + "/" + info.completeBaseName() + ".msk";
+            m_settings.addRecentFile(mskPath);
+            updateRecentFileActions();
+            statusBar()->showMessage(tr("New project started: %1").arg(info.fileName()), 5000);
+        } else {
+            QMessageBox::critical(this, tr("Error"), tr("Could not load image: %1\n\nReason: %2").arg(fileName, m_viewWidget->lastError()));
+        }
+    }
+}
+
+void MainWindow::openProject()
+{
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Open Mask Project"), "", tr("Mask Project (*.msk)"));
+    if (!fileName.isEmpty()) {
+        if (m_viewWidget->loadProject(fileName)) {
+            m_settings.addRecentFile(fileName);
+            updateRecentFileActions();
+            statusBar()->showMessage(tr("Project loaded: %1").arg(QFileInfo(fileName).fileName()), 5000);
+        } else {
+            QMessageBox::critical(this, tr("Error"), tr("Could not load project: %1").arg(m_viewWidget->lastError()));
+        }
+    }
+}
+
+void MainWindow::saveProject()
+{
+    if (!m_viewWidget->isImageLoaded()) return;
+    if (m_viewWidget->saveProject()) {
+        QFileInfo info(m_viewWidget->imagePath());
+        QString mskPath = info.absolutePath() + "/" + info.completeBaseName() + ".msk";
+        m_settings.addRecentFile(mskPath);
+        updateRecentFileActions();
+        statusBar()->showMessage(tr("Project saved successfully"), 3000);
+    } else {
+        QMessageBox::critical(this, tr("Error"), tr("Could not save project."));
+    }
+}
+
+void MainWindow::exportImage()
 {
     if (!m_viewWidget->isImageLoaded()) return;
 
-    ExportDialog dlg(this);
-    if (dlg.exec() == QDialog::Accepted) {
-        QString fileName = QFileDialog::getSaveFileName(this, tr("Save Masked Image"), "", tr("Images (*.png *.jpg)"));
-        if (!fileName.isEmpty()) {
-            m_viewWidget->saveImage(fileName, dlg.maskColor(), dlg.opacity(), dlg.padx(), dlg.pady(), dlg.bgColor());
-        }
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Masked Image"), "", tr("Images (*.png *.jpg)"));
+    if (!fileName.isEmpty()) {
+        m_viewWidget->saveImage(fileName, m_viewWidget->maskColor(), m_viewWidget->maskOpacity(), m_viewWidget->padx(), m_viewWidget->pady(), m_viewWidget->bgColor(), m_viewWidget->interleavingSpace());
+        statusBar()->showMessage(tr("Image exported to %1").arg(QFileInfo(fileName).fileName()), 5000);
     }
 }
 
 void MainWindow::updatePointDisparity(int value)
 {
-    m_viewWidget->setSelectedPointDisparity(value); // Need to add this to widget
+    m_viewWidget->setSelectedPointDisparity(value);
 }
 
 void MainWindow::clearPoints()

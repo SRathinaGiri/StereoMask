@@ -1,0 +1,10 @@
+<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="64" height="64" rx="12" fill="#2c3e50"/>
+  <!-- Left Eye -->
+  <rect x="8" y="20" width="20" height="24" rx="4" fill="#e74c3c" stroke="white" stroke-width="2"/>
+  <!-- Right Eye -->
+  <rect x="36" y="20" width="20" height="24" rx="4" fill="#3498db" stroke="white" stroke-width="2"/>
+  <!-- Bridge -->
+  <path d="M28 32 Q32 24 36 32" stroke="white" stroke-width="2" fill="none"/>
+</svg>

@@ -1,5 +1,6 @@
 #include "stereoimageprocessor.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <QDebug>
 #include <QImageReader>
 #include <QFile>
@@ -61,22 +62,50 @@ bool StereoImageProcessor::loadSideBySide(const QString &fileName)
     return true;
 }
 
-void StereoImageProcessor::createAnaglyph()
+void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>* points, const QColor& maskColor, float opacity)
 {
     if (m_left.isNull() || m_right.isNull())
         return;
 
     m_anaglyph = QImage(m_left.size(), QImage::Format_RGB32);
 
-    for (int y = 0; y < m_left.height(); ++y) {
-        const QRgb *leftLine = reinterpret_cast<const QRgb*>(m_left.scanLine(y));
-        const QRgb *rightLine = reinterpret_cast<const QRgb*>(m_right.scanLine(y));
+    const QImage &srcRed = swapped ? m_right : m_left;
+    const QImage &srcGB = swapped ? m_left : m_right;
+
+    QImage redImg = srcRed;
+    QImage gbImg = srcGB;
+
+    if (points && !points->isEmpty()) {
+        auto applyMask = [&](QImage& target, bool isRightEye) {
+            QPainter p(&target);
+            QPolygonF poly;
+            for (const auto &pt : *points) {
+                float disp = isRightEye ? pt.disparity : 0;
+                poly << QPointF(pt.pos.x() - disp, pt.pos.y());
+            }
+            QPainterPath path;
+            path.addRect(target.rect());
+            path.addPolygon(poly);
+            path.closeSubpath();
+            QColor fill = maskColor;
+            fill.setAlphaF(opacity);
+            p.setPen(Qt::NoPen);
+            p.fillPath(path, fill);
+            p.end();
+        };
+        applyMask(redImg, swapped);   // If swapped, Red uses Right eye data (which has disparity)
+        applyMask(gbImg, !swapped);   // If swapped, GB uses Left eye data (no disparity)
+    }
+
+    for (int y = 0; y < redImg.height(); ++y) {
+        const QRgb *redLine = reinterpret_cast<const QRgb*>(redImg.scanLine(y));
+        const QRgb *gbLine = reinterpret_cast<const QRgb*>(gbImg.scanLine(y));
         QRgb *dstLine = reinterpret_cast<QRgb*>(m_anaglyph.scanLine(y));
 
-        for (int x = 0; x < m_left.width(); ++x) {
-            int r = qRed(leftLine[x]);
-            int g = qGreen(rightLine[x]);
-            int b = qBlue(rightLine[x]);
+        for (int x = 0; x < redImg.width(); ++x) {
+            int r = qRed(redLine[x]);
+            int g = qGreen(gbLine[x]);
+            int b = qBlue(gbLine[x]);
             dstLine[x] = qRgb(r, g, b);
         }
     }

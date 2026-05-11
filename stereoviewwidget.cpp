@@ -26,39 +26,37 @@ bool StereoViewWidget::loadImage(const QString &fileName)
     if (m_processor.loadSideBySide(fileName)) {
         m_imagePath = fileName;
         m_panOffset = QPointF(0, 0);
-        if (!loadProject(fileName)) {
+        
+        QFileInfo info(fileName);
+        QString mskPath = info.absolutePath() + "/" + info.completeBaseName() + ".msk";
+        if (QFile::exists(mskPath)) {
+            QFile file(mskPath);
+            if (file.open(QIODevice::ReadOnly)) {
+                QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+                if (!doc.isNull()) {
+                    QJsonObject obj = doc.object();
+                    QJsonArray pts = obj["points"].toArray();
+                    m_undoStack->clear();
+                    m_points.clear();
+                    m_selectedIndices.clear();
+                    for (int i = 0; i < pts.size(); ++i) {
+                        QJsonObject pObj = pts[i].toObject();
+                        m_points.append({QPointF(pObj["x"].toDouble(), pObj["y"].toDouble()), (float)pObj["d"].toDouble()});
+                    }
+                }
+            }
+        } else {
             m_undoStack->clear();
             m_points.clear();
             m_selectedIndices.clear();
-            m_zoom = 1.0f;
         }
+        m_zoom = 1.0f;
+        updateAnaglyphIfActive();
         update();
         return true;
     }
     m_lastError = m_processor.lastError();
     return false;
-}
-
-bool StereoViewWidget::loadProject(const QString &imageName)
-{
-    QFileInfo info(imageName);
-    QString mskPath = info.absolutePath() + "/" + info.completeBaseName() + ".msk";
-    QFile file(mskPath);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (doc.isNull()) return false;
-    QJsonObject obj = doc.object();
-    QJsonArray pts = obj["points"].toArray();
-    m_undoStack->clear();
-    m_points.clear();
-    m_selectedIndices.clear();
-    for (int i = 0; i < pts.size(); ++i) {
-        QJsonObject pObj = pts[i].toObject();
-        m_points.append({QPointF(pObj["x"].toDouble(), pObj["y"].toDouble()), (float)pObj["d"].toDouble()});
-    }
-    m_zoom = 1.0f;
-    m_panOffset = QPointF(0, 0);
-    return true;
 }
 
 bool StereoViewWidget::saveProject()
@@ -72,21 +70,101 @@ bool StereoViewWidget::saveProject()
         pObj["x"] = p.pos.x(); pObj["y"] = p.pos.y(); pObj["d"] = p.disparity;
         pts.append(pObj);
     }
-    QJsonObject obj; obj["points"] = pts;
+    QJsonObject obj; 
+    obj["points"] = pts;
+    obj["imagePath"] = m_imagePath;
+    
+    // Project specific settings
+    obj["maskColor"] = m_maskColor.name();
+    obj["maskOpacity"] = (double)m_maskOpacity;
+    obj["padx"] = m_padx;
+    obj["pady"] = m_pady;
+    obj["bgColor"] = m_bgColor.name();
+    obj["interleavingSpace"] = m_interleavingSpace;
+
     QFile file(mskPath);
     if (!file.open(QIODevice::WriteOnly)) return false;
     file.write(QJsonDocument(obj).toJson());
     return true;
 }
 
-void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor)
+bool StereoViewWidget::loadProject(const QString &path)
+{
+    QFileInfo info(path);
+    if (info.suffix().toLower() != "msk") {
+        return loadImage(path);
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_lastError = tr("Could not open file: %1").arg(path);
+        return false;
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (doc.isNull()) {
+        m_lastError = tr("Invalid JSON in mask file.");
+        return false;
+    }
+    QJsonObject obj = doc.object();
+    
+    QString storedImgPath = obj["imagePath"].toString();
+    bool imgLoaded = false;
+
+    // 1. Try stored path
+    if (!storedImgPath.isEmpty() && QFile::exists(storedImgPath)) {
+        imgLoaded = loadImage(storedImgPath);
+    }
+
+    // 2. Try same folder with common extensions
+    if (!imgLoaded) {
+        QString base = info.absolutePath() + "/" + info.completeBaseName();
+        QStringList extensions = {".jpg", ".jpeg", ".png", ".bmp", ".JPG", ".JPEG", ".PNG", ".BMP"};
+        for (const QString &ext : extensions) {
+            if (QFile::exists(base + ext)) {
+                if (loadImage(base + ext)) {
+                    imgLoaded = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!imgLoaded) {
+        m_lastError = tr("Associated image not found for this mask project.");
+        return false;
+    }
+
+    // Load project specific settings if they exist
+    if (obj.contains("maskColor")) m_maskColor = QColor(obj["maskColor"].toString());
+    if (obj.contains("maskOpacity")) m_maskOpacity = (float)obj["maskOpacity"].toDouble();
+    if (obj.contains("padx")) m_padx = obj["padx"].toInt();
+    if (obj.contains("pady")) m_pady = obj["pady"].toInt();
+    if (obj.contains("bgColor")) m_bgColor = QColor(obj["bgColor"].toString());
+    if (obj.contains("interleavingSpace")) m_interleavingSpace = obj["interleavingSpace"].toInt();
+
+    // Reload points from THIS msk file
+    QJsonArray pts = obj["points"].toArray();
+    m_undoStack->clear();
+    m_points.clear();
+    m_selectedIndices.clear();
+    for (int i = 0; i < pts.size(); ++i) {
+        QJsonObject pObj = pts[i].toObject();
+        m_points.append({QPointF(pObj["x"].toDouble(), pObj["y"].toDouble()), (float)pObj["d"].toDouble()});
+    }
+    m_zoom = 1.0f;
+    m_panOffset = QPointF(0, 0);
+    update();
+    return true;
+}
+
+void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace)
 {
     if (!m_processor.isValid()) return;
     int iw = m_processor.leftImage().width();
     int ih = m_processor.leftImage().height();
     
-    // Total canvas: 2 * image_width + 2 * padx, 1 * image_height + 2 * pady
-    int totalW = (iw * 2) + (padx * 2);
+    // Total canvas: 2 * image_width + 2 * padx + interleavingSpace, 1 * image_height + 2 * pady
+    int totalW = (iw * 2) + (padx * 2) + interleavingSpace;
     int totalH = ih + (pady * 2);
     
     QImage result(totalW, totalH, QImage::Format_RGB32);
@@ -96,7 +174,7 @@ void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColo
     painter.setRenderHint(QPainter::Antialiasing);
 
     auto drawEye = [&](const QImage &img, int offsetX, bool isRight) {
-        QRect target(offsetX + padx, pady, iw, ih);
+        QRect target(offsetX, pady, iw, ih);
         painter.drawImage(target, img);
         
         if (!m_points.isEmpty()) {
@@ -118,21 +196,38 @@ void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColo
         }
     };
 
-    drawEye(m_processor.leftImage(), 0, false);
-    drawEye(m_processor.rightImage(), iw, true);
+    drawEye(m_processor.leftImage(), padx, false);
+    drawEye(m_processor.rightImage(), padx + iw + interleavingSpace, true);
     
     painter.end();
     result.save(fileName);
 }
 
-void StereoViewWidget::setAnaglyphMode(bool enabled) { m_anaglyphMode = enabled; update(); }
-void StereoViewWidget::setSwapSides(bool enabled) { m_swapSides = enabled; update(); }
+void StereoViewWidget::setAnaglyphMode(bool enabled) { 
+    m_anaglyphMode = enabled; 
+    updateAnaglyphIfActive();
+    update(); 
+}
+void StereoViewWidget::setSwapSides(bool enabled) { 
+    m_swapSides = enabled; 
+    updateAnaglyphIfActive();
+    update(); 
+}
+
+void StereoViewWidget::updateAnaglyphIfActive()
+{
+    if (m_anaglyphMode && m_processor.isValid()) {
+        m_processor.createAnaglyph(m_swapSides, &m_points, m_maskColor, m_maskOpacity);
+    }
+}
+
 void StereoViewWidget::setZoom(float zoom) { m_zoom = qBound(0.1f, zoom, 20.0f); update(); }
 
 void StereoViewWidget::addPoint(const QPointF &pos, float disparity, int index)
 {
     m_undoStack->push(new AddPointCommand(this, {pos, disparity}, index));
-    saveProject();
+    updateAnaglyphIfActive();
+    if (m_autoSave) saveProject();
 }
 
 void StereoViewWidget::deleteSelectedPoints()
@@ -144,17 +239,18 @@ void StereoViewWidget::deleteSelectedPoints()
     for (int idx : sortedIndices) removedPoints.append(m_points[idx]);
     m_undoStack->push(new DeletePointsCommand(this, sortedIndices, removedPoints));
     m_selectedIndices.clear(); m_selectedPointIndex = -1;
-    saveProject();
+    updateAnaglyphIfActive();
+    if (m_autoSave) saveProject();
 }
 
-void StereoViewWidget::updatePointInternal(int index, const MaskPoint &p) { if (index >= 0 && index < m_points.count()) { m_points[index] = p; update(); } }
-void StereoViewWidget::updatePointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) { if (indices[i] >= 0 && indices[i] < m_points.count()) m_points[indices[i]] = ps[i]; } update(); }
-void StereoViewWidget::addPointInternal(const MaskPoint &p, int index) { if (index >= 0 && index <= m_points.count()) m_points.insert(index, p); else m_points.append(p); update(); }
-void StereoViewWidget::removePointInternal(int index) { if (!m_points.isEmpty()) { if (index >= 0 && index < m_points.count()) m_points.removeAt(index); else m_points.removeLast(); } update(); }
-void StereoViewWidget::insertPointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) m_points.insert(indices[i], ps[i]); update(); }
-void StereoViewWidget::removePointsInternal(const QList<int> &indices) { for (int idx : indices) { if (idx >= 0 && idx < m_points.count()) m_points.removeAt(idx); } update(); }
+void StereoViewWidget::updatePointInternal(int index, const MaskPoint &p) { if (index >= 0 && index < m_points.count()) { m_points[index] = p; updateAnaglyphIfActive(); update(); } }
+void StereoViewWidget::updatePointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) { if (indices[i] >= 0 && indices[i] < m_points.count()) m_points[indices[i]] = ps[i]; } updateAnaglyphIfActive(); update(); }
+void StereoViewWidget::addPointInternal(const MaskPoint &p, int index) { if (index >= 0 && index <= m_points.count()) m_points.insert(index, p); else m_points.append(p); updateAnaglyphIfActive(); update(); }
+void StereoViewWidget::removePointInternal(int index) { if (!m_points.isEmpty()) { if (index >= 0 && index < m_points.count()) m_points.removeAt(index); else m_points.removeLast(); } updateAnaglyphIfActive(); update(); }
+void StereoViewWidget::insertPointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) m_points.insert(indices[i], ps[i]); updateAnaglyphIfActive(); update(); }
+void StereoViewWidget::removePointsInternal(const QList<int> &indices) { for (int idx : indices) { if (idx >= 0 && idx < m_points.count()) m_points.removeAt(idx); } updateAnaglyphIfActive(); update(); }
 
-void StereoViewWidget::clearPoints() { m_points.clear(); m_selectedIndices.clear(); m_undoStack->clear(); update(); saveProject(); }
+void StereoViewWidget::clearPoints() { m_points.clear(); m_selectedIndices.clear(); m_undoStack->clear(); updateAnaglyphIfActive(); update(); if (m_autoSave) saveProject(); }
 
 void StereoViewWidget::alignSelectedPoints(AlignSide side)
 {
@@ -172,7 +268,8 @@ void StereoViewWidget::alignSelectedPoints(AlignSide side)
         newPs << p;
     }
     m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, oldPs, newPs));
-    saveProject();
+    updateAnaglyphIfActive();
+    if (m_autoSave) saveProject();
 }
 
 void StereoViewWidget::calculateLayout(QRect &rL, QRect &rR, float &scale)
@@ -217,8 +314,6 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
     QPainter painter(this);
     painter.fillRect(rect(), Qt::black);
     if (!m_processor.isValid()) {
-        painter.setPen(Qt::white);
-        painter.drawText(rect(), Qt::AlignCenter, tr("Load SBS Image\nL-Drag: Selection Rect\nP-Drag / Mid-Drag: Pan\nShift+L-Drag: Depth\nWheel: Zoom\nCtrl+Z: Undo\nDel: Delete Selected"));
         return;
     }
 
@@ -235,10 +330,21 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
         if (!m_points.isEmpty()) {
             QPolygonF poly;
             for (const auto &p : m_points) poly << imageToWidget(p.pos, v, scale, isRight ? p.disparity : 0);
-            QPainterPath path; path.addRect(target); path.addPolygon(poly); path.closeSubpath();
-            painter.setPen(QPen(Qt::white, 1));
-            painter.fillPath(path, QColor(0,0,0,150));
-            painter.drawPolygon(poly);
+            
+            // Only draw the darkening mask overlay if NOT in anaglyph mode (it's already baked in there)
+            if (!m_anaglyphMode) {
+                QPainterPath path; path.addRect(target); path.addPolygon(poly); path.closeSubpath();
+                painter.setPen(QPen(Qt::white, 1));
+                QColor fill = m_maskColor;
+                fill.setAlphaF(m_maskOpacity);
+                painter.fillPath(path, fill);
+                painter.drawPolygon(poly);
+            } else {
+                // In anaglyph mode, just draw the outline of the polygon
+                painter.setPen(QPen(Qt::white, 1, Qt::DotLine));
+                painter.drawPolygon(poly);
+            }
+
             for (int i=0; i<m_points.count(); ++i) {
                 painter.setBrush(m_selectedIndices.contains(i) ? Qt::yellow : Qt::red);
                 painter.setPen(i == m_selectedPointIndex ? QPen(Qt::cyan, 2) : QPen(Qt::white, 1));
@@ -376,8 +482,8 @@ void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
         if (moved) {
             if (m_selectedIndices.count() == 1) m_undoStack->push(new MovePointCommand(this, m_selectedPointIndex, m_preMovePoints[0], m_points[m_selectedPointIndex]));
             else m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, m_preMovePoints, newPs));
+            if (m_autoSave) saveProject();
         }
-        saveProject();
     }
     m_selectedPointIndex = -1; setCursor(m_panMode ? Qt::OpenHandCursor : Qt::ArrowCursor); update();
 }
@@ -409,7 +515,8 @@ void StereoViewWidget::setSelectedPointDisparity(int disparity)
     if (m_selectedIndices.isEmpty()) return;
     QVector<MaskPoint> oldPs, newPs;
     for (int idx : m_selectedIndices) { oldPs << m_points[idx]; MaskPoint p = m_points[idx]; p.disparity = (float)disparity; newPs << p; }
-    m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, oldPs, newPs)); saveProject();
+    m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, oldPs, newPs));
+    if (m_autoSave) saveProject();
 }
 
 void StereoViewWidget::transformSelectedPoints(float scaleX, float scaleY, float dx, float dy)
@@ -419,5 +526,6 @@ void StereoViewWidget::transformSelectedPoints(float scaleX, float scaleY, float
     QPointF center(0, 0); for (int idx : indices) center += m_points[idx].pos; center /= (float)indices.count();
     QVector<MaskPoint> oldPs, newPs;
     for (int idx : indices) { oldPs << m_points[idx]; MaskPoint p = m_points[idx]; p.pos = center + QPointF((p.pos.x() - center.x()) * scaleX, (p.pos.y() - center.y()) * scaleY) + QPointF(dx, dy); newPs << p; }
-    m_undoStack->push(new BatchMoveCommand(this, indices, oldPs, newPs)); saveProject();
+    m_undoStack->push(new BatchMoveCommand(this, indices, oldPs, newPs));
+    if (m_autoSave) saveProject();
 }

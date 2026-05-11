@@ -2,6 +2,9 @@
 #define STEREOIMAGEPROCESSOR_H
 
 #include <QImage>
+#include <QVector>
+#include <QColor>
+#include "maskpoint.h"
 
 class StereoImageProcessor
 {
@@ -17,8 +20,9 @@ public:
 
     bool isValid() const { return !m_left.isNull() && !m_right.isNull(); }
 
+    void createAnaglyph(bool swapped = false, const QVector<MaskPoint>* points = nullptr, const QColor& maskColor = Qt::black, float opacity = 0.6f);
+
 private:
-    void createAnaglyph();
 
     QImage m_left;
     QImage m_right;

@@ -2,11 +2,32 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QImage>
+#include <QColor>
+#include <QJsonObject>
 
 class StereoViewWidget;
-class QSlider;
 class QSpinBox;
+class QSlider;
+
+#include <QStringList>
+#include <QTimer>
+
+struct AppSettings {
+    QColor maskColor = Qt::black;
+    float opacity = 0.6f;
+    int padx = 0;
+    int pady = 0;
+    QColor bgColor = Qt::white;
+    int interleavingSpace = 0;
+    bool autoSave = true;
+    QStringList recentFiles;
+
+    void load();
+    void save() const;
+    QJsonObject toJson() const;
+    void fromJson(const QJsonObject &obj);
+    void addRecentFile(const QString &path);
+};
 
 class MainWindow : public QMainWindow
 {
@@ -17,22 +38,29 @@ public:
     ~MainWindow();
 
 private slots:
-    void openImage();
-    void saveImage();
+    void newProject();
+    void openProject();
+    void saveProject();
+    void exportImage();
     void updatePointDisparity(int value);
+    void clearPoints();
     void setAnaglyphMode(bool enabled);
     void toggleSwapSides(bool enabled);
-    void clearPoints();
+    void showSettings();
+    void showHelp();
+    void showAbout();
+    void openRecentFile();
 
 private:
     void createMenus();
-    void createDockWidgets();
+    void createToolbar();
+    void setupConnections();
+    void updateRecentFileActions();
 
     StereoViewWidget *m_viewWidget;
-    
-    // Mask controls
-    QSlider *m_disparitySlider;
-    QSpinBox *m_disparitySpinBox;
+    AppSettings m_settings;
+    QMenu *m_recentFilesMenu;
+    QAction *m_recentFileActions[5];
 };
 
 #endif // MAINWINDOW_H

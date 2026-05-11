@@ -1,32 +1,35 @@
-# StereoMask (Qt 6)
+# StereoMask v1.1
 
-A modern, 64-bit recreation of the StereoMasken application.
+A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
 
 ## Features
-- Load side-by-side stereo images.
-- Interactive 3D mask adjustment (Width, Height, Position, Depth/Disparity).
-- Multiple preview modes:
-  - Side-by-Side (SBS)
-  - Anaglyph (Red/Cyan)
-- Black-out masking: Areas outside the frame are shaded or blacked out to preserve the 3D window effect.
-- Export results as SBS or Anaglyph images.
 
-## Building
-This project uses CMake and Qt 6.
+- **Modern Emoji Toolbar:** Intuitive controls for file operations, editing, and view modes.
+- **Precision Masking:** Add, move, and multi-select points to define custom masks for 3D images.
+- **Masked Anaglyph Preview:** Real-time 3D preview of your mask using Red/Cyan channels, supporting both parallel and cross-eye sources.
+- **Project Persistence (.msk):** Save your work as mask projects that store point data and project-specific settings.
+- **Interleaving Space:** Configure gaps between eye images in exported masks, filled with customizable background colors.
+- **AutoSave:** Optional automatic saving of project changes.
+- **Recent Files:** Quick access to the last 5 worked-on projects.
+- **High-DPI Support:** Fully optimized for 4K and multi-monitor setups.
 
-1. Open the project in Qt Creator or use the command line:
-   ```powershell
-   mkdir build
-   cd build
-   cmake -DCMAKE_PREFIX_PATH=D:/QT/6.11.0/mingw_64 ..
-   mingw32-make
-   ```
+## Author
 
-2. Run the executable:
-   ```powershell
-   ./StereoMask.exe
-   ```
+**S. Rathinagiri**
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ## Requirements
+
 - Qt 6.x
-- C++17 compatible compiler (MinGW/GCC recommended)
+- CMake 3.16+
+- C++17 Compatible Compiler
+
+## Building
+
+```powershell
+cmake -B build -G Ninja
+cmake --build build
+```
