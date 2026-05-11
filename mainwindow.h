@@ -4,13 +4,12 @@
 #include <QMainWindow>
 #include <QColor>
 #include <QJsonObject>
+#include <QStringList>
+#include <QTimer>
 
 class StereoViewWidget;
 class QSpinBox;
 class QSlider;
-
-#include <QStringList>
-#include <QTimer>
 
 struct AppSettings {
     QColor maskColor = Qt::black;
@@ -21,6 +20,10 @@ struct AppSettings {
     int interleavingSpace = 0;
     bool autoSave = true;
     QStringList recentFiles;
+
+    bool snapEnabled = true;
+    int featherAmount = 0;
+    QString lastFolder;
 
     void load();
     void save() const;
@@ -44,6 +47,7 @@ private slots:
     void exportImage();
     void updatePointDisparity(int value);
     void clearPoints();
+    void toggleCurve();
     void setAnaglyphMode(bool enabled);
     void toggleSwapSides(bool enabled);
     void showSettings();

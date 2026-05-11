@@ -78,15 +78,51 @@ void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>
     if (points && !points->isEmpty()) {
         auto applyMask = [&](QImage& target, bool isRightEye) {
             QPainter p(&target);
-            QPolygonF poly;
-            for (const auto &pt : *points) {
-                float disp = isRightEye ? pt.disparity : 0;
-                poly << QPointF(pt.pos.x() - disp, pt.pos.y());
-            }
+            p.setRenderHint(QPainter::Antialiasing);
+            
             QPainterPath path;
             path.addRect(target.rect());
-            path.addPolygon(poly);
+            
+            if (!points->isEmpty()) {
+                for (int i = 0; i < points->count(); ++i) {
+                    const auto &pt = (*points)[i];
+                    float d = isRightEye ? pt.disparity : 0;
+                    QPointF pPos(pt.pos.x() - d, pt.pos.y());
+                    
+                    if (i == 0) {
+                        path.moveTo(pPos);
+                    } else {
+                        const auto &prev = (*points)[i-1];
+                        if (prev.isCurve) {
+                            float d1 = isRightEye ? prev.cp1Disparity : 0;
+                            float d2 = isRightEye ? prev.cp2Disparity : 0;
+                            path.cubicTo(QPointF(prev.cp1.x() - d1, prev.cp1.y()),
+                                         QPointF(prev.cp2.x() - d2, prev.cp2.y()),
+                                         pPos);
+                        } else {
+                            path.lineTo(pPos);
+                        }
+                    }
+                }
+                
+                // Close path
+                if (points->count() > 2) {
+                    const auto &last = points->last();
+                    float dS = isRightEye ? (*points)[0].disparity : 0;
+                    QPointF sPos((*points)[0].pos.x() - dS, (*points)[0].pos.y());
+                    if (last.isCurve) {
+                        float d1 = isRightEye ? last.cp1Disparity : 0;
+                        float d2 = isRightEye ? last.cp2Disparity : 0;
+                        path.cubicTo(QPointF(last.cp1.x() - d1, last.cp1.y()),
+                                     QPointF(last.cp2.x() - d2, last.cp2.y()),
+                                     sPos);
+                    } else {
+                        path.lineTo(sPos);
+                    }
+                }
+            }
             path.closeSubpath();
+            
             QColor fill = maskColor;
             fill.setAlphaF(opacity);
             p.setPen(Qt::NoPen);

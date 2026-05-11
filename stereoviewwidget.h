@@ -20,7 +20,7 @@ public:
     bool loadProject(const QString &fileName);
     bool saveProject();
     QString lastError() const { return m_lastError; }
-    void saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace);
+    void saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace, std::function<void(int)> progressCallback = nullptr);
     
     bool isImageLoaded() const { return !m_imagePath.isEmpty() && m_processor.isValid(); }
     void setAnaglyphMode(bool enabled);
@@ -28,6 +28,7 @@ public:
     void setZoom(float zoom);
     void setLockHorizontal(bool locked) { m_lockHorizontal = locked; }
     void setLockVertical(bool locked) { m_lockVertical = locked; }
+    void setSnapEnabled(bool enabled) { m_snapEnabled = enabled; }
     void setPanMode(bool enabled) { m_panMode = enabled; }
     float zoom() const { return m_zoom; }
 
@@ -36,10 +37,15 @@ public:
     void clearPoints();
     void setSelectedPointDisparity(int disparity);
     void transformSelectedPoints(float scaleX, float scaleY, float dx, float dy);
+    void toggleCurve();
 
-    void setMaskSettings(const QColor &color, float opacity) { m_maskColor = color; m_maskOpacity = opacity; updateAnaglyphIfActive(); update(); }
+    void setMaskSettings(const QColor &color, float opacity, int feather = 0) { 
+        m_maskColor = color; m_maskOpacity = opacity; m_featherAmount = feather; 
+        updateAnaglyphIfActive(); update(); 
+    }
     void setMaskColor(const QColor &color) { m_maskColor = color; updateAnaglyphIfActive(); update(); }
     void setMaskOpacity(float opacity) { m_maskOpacity = opacity; updateAnaglyphIfActive(); update(); }
+    void setMaskFeather(int amount) { m_featherAmount = amount; updateAnaglyphIfActive(); update(); }
     void setPaddingSettings(int px, int py, const QColor &bg, int interleaving) { m_padx = px; m_pady = py; m_bgColor = bg; m_interleavingSpace = interleaving; }
 
     void updateAnaglyphIfActive();
@@ -48,6 +54,8 @@ public:
     float maskOpacity() const { return m_maskOpacity; }
     int padx() const { return m_padx; }
     int pady() const { return m_pady; }
+    int featherAmount() const { return m_featherAmount; }
+    bool snapEnabled() const { return m_snapEnabled; }
     QColor bgColor() const { return m_bgColor; }
     int interleavingSpace() const { return m_interleavingSpace; }
 
@@ -55,6 +63,11 @@ public:
 
     enum AlignSide { AlignLeft, AlignRight, AlignTop, AlignBottom, AlignDepth };
     void alignSelectedPoints(AlignSide side);
+
+    enum RotationAxis { AxisNone, AxisX, AxisY, AxisZ };
+    void setRotationMode(RotationAxis axis) { m_rotationMode = axis; update(); }
+    RotationAxis rotationMode() const { return m_rotationMode; }
+    void rotateSelectedPoints(float angleDegrees, RotationAxis axis);
 
     QUndoStack* undoStack() const { return m_undoStack; }
     QString imagePath() const { return m_imagePath; }
@@ -81,9 +94,15 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
 
 private:
+    QPainterPath createMaskPath(const QVector<MaskPoint> &pts, const QRectF &v, float scale, bool isRight, bool includeRect = true, bool ignorePan = false);
+    void drawFeatheredPath(QPainter &painter, const QPainterPath &path, const QColor &color, int feather);
     QPointF widgetToImage(const QPoint &pos, const QRect &targetRect, float scale);
     QPointF imageToWidget(const QPointF &pos, const QRect &targetRect, float scale, float disparity = 0);
     void calculateLayout(QRect &rL, QRect &rR, float &scale);
+
+    enum ControlPointType { HitNone, HitPoint, HitCP1, HitCP2 };
+    ControlPointType m_hitType = HitNone;
+    RotationAxis m_rotationMode = AxisNone;
 
     StereoImageProcessor m_processor;
     QVector<MaskPoint> m_points;
@@ -101,6 +120,7 @@ private:
     bool m_swapSides = false;
     bool m_lockHorizontal = false;
     bool m_lockVertical = false;
+    bool m_snapEnabled = true;
     bool m_isSelecting = false;
     bool m_isPanning = false;
     bool m_panMode = false;
@@ -109,6 +129,7 @@ private:
 
     QColor m_maskColor = Qt::black;
     float m_maskOpacity = 0.6f;
+    int m_featherAmount = 0;
     int m_padx = 0;
     int m_pady = 0;
     QColor m_bgColor = Qt::white;

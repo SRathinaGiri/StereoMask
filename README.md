@@ -1,8 +1,16 @@
-# StereoMask v1.1
+# StereoMask v1.2
 
 A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
 
-## Features
+## New in v1.2
+
+- **Refined Mask Feathering:** Soften mask edges with pixel-perfect precision (0-200px) without affecting image borders.
+- **Snapping Toggle:** Quickly toggle point snapping on/off via the toolbar or shortcut (**`S`**).
+- **Export Progress Tracking:** Real-time feedback in the status bar during image export.
+- **Smart Folder Persistence:** Automatically remembers the last used directory for all file operations.
+- **Optimized Rendering:** Improved masking engine with better memory safety and performance capping.
+
+## Core Features
 
 - **Modern Emoji Toolbar:** Intuitive controls for file operations, editing, and view modes.
 - **Precision Masking:** Add, move, and multi-select points to define custom masks for 3D images.
@@ -30,6 +38,7 @@ This project is licensed under the [MIT License](LICENSE).
 ## Building
 
 ```powershell
-cmake -B build -G Ninja
+$env:PATH = "D:\Qt\6.11.0\mingw_64\bin;D:\Qt\Tools\mingw1310_64\bin;" + $env:PATH
+cmake -B build -S . -G "MinGW Makefiles"
 cmake --build build
 ```

@@ -10,6 +10,10 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFileInfo>
+#include <QtMath>
+#include <QGraphicsBlurEffect>
+#include <QGraphicsScene>
+#include <QGraphicsPixmapItem>
 
 StereoViewWidget::StereoViewWidget(QWidget *parent)
     : QWidget(parent), m_panOffset(0, 0), m_isPanning(false), m_panMode(false)
@@ -41,7 +45,17 @@ bool StereoViewWidget::loadImage(const QString &fileName)
                     m_selectedIndices.clear();
                     for (int i = 0; i < pts.size(); ++i) {
                         QJsonObject pObj = pts[i].toObject();
-                        m_points.append({QPointF(pObj["x"].toDouble(), pObj["y"].toDouble()), (float)pObj["d"].toDouble()});
+                        MaskPoint mp;
+                        mp.pos = QPointF(pObj["x"].toDouble(), pObj["y"].toDouble());
+                        mp.disparity = (float)pObj["d"].toDouble();
+                        if (pObj["isCurve"].toBool()) {
+                            mp.isCurve = true;
+                            mp.cp1 = QPointF(pObj["cp1x"].toDouble(), pObj["cp1y"].toDouble());
+                            mp.cp1Disparity = (float)pObj["cp1d"].toDouble();
+                            mp.cp2 = QPointF(pObj["cp2x"].toDouble(), pObj["cp2y"].toDouble());
+                            mp.cp2Disparity = (float)pObj["cp2d"].toDouble();
+                        }
+                        m_points.append(mp);
                     }
                 }
             }
@@ -68,6 +82,11 @@ bool StereoViewWidget::saveProject()
     for (const auto &p : m_points) {
         QJsonObject pObj;
         pObj["x"] = p.pos.x(); pObj["y"] = p.pos.y(); pObj["d"] = p.disparity;
+        if (p.isCurve) {
+            pObj["isCurve"] = true;
+            pObj["cp1x"] = p.cp1.x(); pObj["cp1y"] = p.cp1.y(); pObj["cp1d"] = p.cp1Disparity;
+            pObj["cp2x"] = p.cp2.x(); pObj["cp2y"] = p.cp2.y(); pObj["cp2d"] = p.cp2Disparity;
+        }
         pts.append(pObj);
     }
     QJsonObject obj; 
@@ -81,6 +100,7 @@ bool StereoViewWidget::saveProject()
     obj["pady"] = m_pady;
     obj["bgColor"] = m_bgColor.name();
     obj["interleavingSpace"] = m_interleavingSpace;
+    obj["featherAmount"] = m_featherAmount;
 
     QFile file(mskPath);
     if (!file.open(QIODevice::WriteOnly)) return false;
@@ -141,6 +161,7 @@ bool StereoViewWidget::loadProject(const QString &path)
     if (obj.contains("pady")) m_pady = obj["pady"].toInt();
     if (obj.contains("bgColor")) m_bgColor = QColor(obj["bgColor"].toString());
     if (obj.contains("interleavingSpace")) m_interleavingSpace = obj["interleavingSpace"].toInt();
+    if (obj.contains("featherAmount")) m_featherAmount = obj["featherAmount"].toInt();
 
     // Reload points from THIS msk file
     QJsonArray pts = obj["points"].toArray();
@@ -149,7 +170,17 @@ bool StereoViewWidget::loadProject(const QString &path)
     m_selectedIndices.clear();
     for (int i = 0; i < pts.size(); ++i) {
         QJsonObject pObj = pts[i].toObject();
-        m_points.append({QPointF(pObj["x"].toDouble(), pObj["y"].toDouble()), (float)pObj["d"].toDouble()});
+        MaskPoint mp;
+        mp.pos = QPointF(pObj["x"].toDouble(), pObj["y"].toDouble());
+        mp.disparity = (float)pObj["d"].toDouble();
+        if (pObj["isCurve"].toBool()) {
+            mp.isCurve = true;
+            mp.cp1 = QPointF(pObj["cp1x"].toDouble(), pObj["cp1y"].toDouble());
+            mp.cp1Disparity = (float)pObj["cp1d"].toDouble();
+            mp.cp2 = QPointF(pObj["cp2x"].toDouble(), pObj["cp2y"].toDouble());
+            mp.cp2Disparity = (float)pObj["cp2d"].toDouble();
+        }
+        m_points.append(mp);
     }
     m_zoom = 1.0f;
     m_panOffset = QPointF(0, 0);
@@ -157,50 +188,114 @@ bool StereoViewWidget::loadProject(const QString &path)
     return true;
 }
 
-void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace)
+void StereoViewWidget::drawFeatheredPath(QPainter &painter, const QPainterPath &path, const QColor &color, int feather)
+{
+    if (feather <= 0) {
+        painter.fillPath(path, color);
+        return;
+    }
+
+    // Limit maximum feather radius for performance and memory
+    feather = qMin(feather, 200);
+
+    // Robust clip rect calculation
+    QRectF clip;
+    if (painter.hasClipping()) {
+        clip = painter.clipBoundingRect();
+    } else {
+        // Fallback to the full device area if no clipping is set
+        clip = QRectF(0, 0, painter.device()->width(), painter.device()->height());
+    }
+
+    QRectF br = path.boundingRect().adjusted(-feather*2, -feather*2, feather*2, feather*2);
+    br = br.intersected(clip);
+    
+    if (br.width() < 1 || br.height() < 1) return;
+
+    // Safety cap for image size (avoid OOM on massive images)
+    if (br.width() > 8000 || br.height() > 8000) return;
+
+    QImage img(br.size().toSize(), QImage::Format_ARGB32);
+    if (img.isNull()) return;
+    img.fill(Qt::transparent);
+    
+    QPainter imgPainter(&img);
+    imgPainter.setRenderHint(QPainter::Antialiasing);
+    imgPainter.translate(-br.topLeft());
+    imgPainter.fillPath(path, color);
+    imgPainter.end();
+
+    // MUST be heap allocated because QGraphicsItem takes ownership and will delete it
+    QGraphicsBlurEffect *blur = new QGraphicsBlurEffect;
+    blur->setBlurRadius(feather);
+    blur->setBlurHints(QGraphicsBlurEffect::QualityHint);
+    
+    QGraphicsScene scene;
+    QGraphicsPixmapItem item;
+    item.setPixmap(QPixmap::fromImage(img));
+    item.setGraphicsEffect(blur); 
+    scene.addItem(&item);
+
+    scene.render(&painter, br, QRectF(0, 0, img.width(), img.height()));
+}
+
+void StereoViewWidget::saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace, std::function<void(int)> progressCallback)
 {
     if (!m_processor.isValid()) return;
     int iw = m_processor.leftImage().width();
     int ih = m_processor.leftImage().height();
     
-    // Total canvas: 2 * image_width + 2 * padx + interleavingSpace, 1 * image_height + 2 * pady
     int totalW = (iw * 2) + (padx * 2) + interleavingSpace;
     int totalH = ih + (pady * 2);
     
-    QImage result(totalW, totalH, QImage::Format_RGB32);
+    QImage result(totalW, totalH, QImage::Format_ARGB32);
     result.fill(bgColor);
     
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing);
+
+    if (progressCallback) progressCallback(10);
 
     auto drawEye = [&](const QImage &img, int offsetX, bool isRight) {
         QRect target(offsetX, pady, iw, ih);
         painter.drawImage(target, img);
         
         if (!m_points.isEmpty()) {
-            QPolygonF poly;
-            for (const auto &pt : m_points) {
-                float disp = isRight ? pt.disparity : 0;
-                poly << QPointF(target.left() + (pt.pos.x() - disp), target.top() + pt.pos.y());
-            }
+            // 1. Create a temporary mask image for this eye
+            QImage maskImg(target.size(), QImage::Format_ARGB32);
+            maskImg.fill(Qt::transparent);
             
-            QPainterPath path;
-            path.addRect(target);
-            path.addPolygon(poly);
-            path.closeSubpath();
+            QPainter maskPainter(&maskImg);
+            maskPainter.setRenderHint(QPainter::Antialiasing);
             
+            // 2. Fill with solid mask color
             QColor fill = maskColor;
             fill.setAlphaF(opacity);
-            painter.setPen(Qt::NoPen);
-            painter.fillPath(path, fill);
+            maskPainter.fillRect(maskImg.rect(), fill);
+            
+            // 3. Erase the polygon hole with feathering
+            // We use a local coordinate system (0,0 to iw,ih) for the path
+            QPainterPath polyPath = createMaskPath(m_points, QRectF(0, 0, iw, ih), 1.0f, isRight, false, true);
+            
+            maskPainter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+            // Draw with solid black to ensure full erasure in the middle
+            drawFeatheredPath(maskPainter, polyPath, Qt::black, m_featherAmount);
+            maskPainter.end();
+            
+            // 4. Composite the mask onto the result
+            painter.drawImage(target.topLeft(), maskImg);
         }
     };
 
     drawEye(m_processor.leftImage(), padx, false);
+    if (progressCallback) progressCallback(50);
+    
     drawEye(m_processor.rightImage(), padx + iw + interleavingSpace, true);
+    if (progressCallback) progressCallback(90);
     
     painter.end();
     result.save(fileName);
+    if (progressCallback) progressCallback(100);
 }
 
 void StereoViewWidget::setAnaglyphMode(bool enabled) { 
@@ -258,13 +353,21 @@ void StereoViewWidget::alignSelectedPoints(AlignSide side)
     int pivotIdx = (m_selectedPointIndex != -1) ? m_selectedPointIndex : m_selectedIndices.first();
     float targetVal = (side == AlignLeft || side == AlignRight) ? m_points[pivotIdx].pos.x() : m_points[pivotIdx].pos.y();
     float targetDisp = m_points[pivotIdx].disparity;
+    
     QVector<MaskPoint> oldPs, newPs;
     for (int idx : m_selectedIndices) {
         oldPs << m_points[idx];
         MaskPoint p = m_points[idx];
-        if (side == AlignLeft || side == AlignRight) p.pos.setX(targetVal);
-        else if (side == AlignTop || side == AlignBottom) p.pos.setY(targetVal);
-        else if (side == AlignDepth) p.disparity = targetDisp;
+        if (side == AlignLeft || side == AlignRight) {
+            p.pos.setX(targetVal);
+            if (p.isCurve) { p.cp1.setX(targetVal); p.cp2.setX(targetVal); }
+        } else if (side == AlignTop || side == AlignBottom) {
+            p.pos.setY(targetVal);
+            if (p.isCurve) { p.cp1.setY(targetVal); p.cp2.setY(targetVal); }
+        } else if (side == AlignDepth) {
+            p.disparity = targetDisp;
+            if (p.isCurve) { p.cp1Disparity = targetDisp; p.cp2Disparity = targetDisp; }
+        }
         newPs << p;
     }
     m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, oldPs, newPs));
@@ -309,13 +412,144 @@ QPointF StereoViewWidget::widgetToImage(const QPoint &pos, const QRect &v, float
     return QPointF((pos.x() - left) / scale, (pos.y() - top) / scale);
 }
 
+QPainterPath StereoViewWidget::createMaskPath(const QVector<MaskPoint> &pts, const QRectF &v, float scale, bool isRight, bool includeRect, bool ignorePan)
+{
+    QPainterPath path;
+    path.setFillRule(Qt::OddEvenFill);
+    if (pts.isEmpty()) return path;
+    if (includeRect) path.addRect(v);
+
+    auto toWidget = [&](const QPointF &pos, float disp) {
+        if (ignorePan) {
+            return QPointF(v.left() + (pos.x() - disp) * scale, v.top() + pos.y() * scale);
+        } else {
+            return imageToWidget(pos, v.toRect(), scale, disp);
+        }
+    };
+
+    for (int i = 0; i < pts.count(); ++i) {
+        const auto &p = pts[i];
+        QPointF pW = toWidget(p.pos, isRight ? p.disparity : 0);
+        
+        if (i == 0) {
+            path.moveTo(pW);
+        } else {
+            const auto &prev = pts[i-1];
+            if (prev.isCurve) {
+                QPointF cp1W = toWidget(prev.cp1, isRight ? prev.cp1Disparity : 0);
+                QPointF cp2W = toWidget(prev.cp2, isRight ? prev.cp2Disparity : 0);
+                path.cubicTo(cp1W, cp2W, pW);
+            } else {
+                path.lineTo(pW);
+            }
+        }
+    }
+    
+    // Close path with last segment
+    if (pts.count() > 2) {
+        const auto &last = pts.last();
+        QPointF startW = toWidget(pts[0].pos, isRight ? pts[0].disparity : 0);
+        if (last.isCurve) {
+            QPointF cp1W = toWidget(last.cp1, isRight ? last.cp1Disparity : 0);
+            QPointF cp2W = toWidget(last.cp2, isRight ? last.cp2Disparity : 0);
+            path.cubicTo(cp1W, cp2W, startW);
+        } else {
+            path.lineTo(startW);
+        }
+    }
+
+    path.closeSubpath();
+    return path;
+}
+
+void StereoViewWidget::toggleCurve()
+{
+    if (m_selectedIndices.isEmpty()) return;
+    QVector<MaskPoint> oldPs, newPs;
+    for (int idx : m_selectedIndices) {
+        oldPs << m_points[idx];
+        MaskPoint p = m_points[idx];
+        p.isCurve = !p.isCurve;
+        if (p.isCurve) {
+            // Initialize handles between this point and the next
+            int nextIdx = (idx + 1) % m_points.count();
+            p.cp1 = p.pos + (m_points[nextIdx].pos - p.pos) * 0.33f;
+            p.cp1Disparity = p.disparity + (m_points[nextIdx].disparity - p.disparity) * 0.33f;
+            p.cp2 = p.pos + (m_points[nextIdx].pos - p.pos) * 0.66f;
+            p.cp2Disparity = p.disparity + (m_points[nextIdx].disparity - p.disparity) * 0.66f;
+        }
+        newPs << p;
+    }
+    m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, oldPs, newPs));
+    updateAnaglyphIfActive();
+    if (m_autoSave) saveProject();
+}
+
+void StereoViewWidget::rotateSelectedPoints(float angleDegrees, RotationAxis axis)
+{
+    QList<int> indices = m_selectedIndices;
+    if (indices.isEmpty()) for (int i = 0; i < m_points.count(); ++i) indices << i;
+    if (indices.isEmpty()) return;
+
+    // Calculate 3D center (X, Y, Disparity)
+    QPointF centerPos(0, 0);
+    float centerDisp = 0;
+    for (int idx : indices) {
+        centerPos += m_points[idx].pos;
+        centerDisp += m_points[idx].disparity;
+    }
+    centerPos /= (float)indices.count();
+    centerDisp /= (float)indices.count();
+
+    float rad = qDegreesToRadians(angleDegrees);
+    float cosA = qCos(rad);
+    float sinA = qSin(rad);
+
+    QVector<MaskPoint> oldPs, newPs;
+    for (int idx : indices) {
+        oldPs << m_points[idx];
+        MaskPoint p = m_points[idx];
+
+        auto rotate3D = [&](QPointF &pos, float &disp) {
+            float dx = pos.x() - centerPos.x();
+            float dy = pos.y() - centerPos.y();
+            float dz = disp - centerDisp;
+
+            if (axis == AxisX) {
+                float newY = dy * cosA - dz * sinA;
+                float newZ = dy * sinA + dz * cosA;
+                pos.setY(centerPos.y() + newY);
+                disp = centerDisp + newZ;
+            } else if (axis == AxisY) {
+                float newX = dx * cosA + dz * sinA;
+                float newZ = -dx * sinA + dz * cosA;
+                pos.setX(centerPos.x() + newX);
+                disp = centerDisp + newZ;
+            } else if (axis == AxisZ) {
+                float newX = dx * cosA - dy * sinA;
+                float newY = dx * sinA + dy * cosA;
+                pos.setX(centerPos.x() + newX);
+                pos.setY(centerPos.y() + newY);
+            }
+        };
+
+        rotate3D(p.pos, p.disparity);
+        if (p.isCurve) {
+            rotate3D(p.cp1, p.cp1Disparity);
+            rotate3D(p.cp2, p.cp2Disparity);
+        }
+        newPs << p;
+    }
+    m_undoStack->push(new BatchMoveCommand(this, indices, oldPs, newPs));
+    updateAnaglyphIfActive();
+    if (m_autoSave) saveProject();
+}
+
 void StereoViewWidget::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
     painter.fillRect(rect(), Qt::black);
-    if (!m_processor.isValid()) {
-        return;
-    }
+    if (!m_processor.isValid()) return;
 
     QRect vL, vR; float scale; calculateLayout(vL, vR, scale);
 
@@ -328,27 +562,58 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
         painter.drawImage(target, img);
         
         if (!m_points.isEmpty()) {
-            QPolygonF poly;
-            for (const auto &p : m_points) poly << imageToWidget(p.pos, v, scale, isRight ? p.disparity : 0);
-            
-            // Only draw the darkening mask overlay if NOT in anaglyph mode (it's already baked in there)
             if (!m_anaglyphMode) {
-                QPainterPath path; path.addRect(target); path.addPolygon(poly); path.closeSubpath();
-                painter.setPen(QPen(Qt::white, 1));
+                // Refined masking with inner-only feathering
+                QImage maskImg(target.size().toSize(), QImage::Format_ARGB32);
+                maskImg.fill(Qt::transparent);
+                
+                QPainter maskPainter(&maskImg);
+                maskPainter.setRenderHint(QPainter::Antialiasing);
+                
                 QColor fill = m_maskColor;
                 fill.setAlphaF(m_maskOpacity);
-                painter.fillPath(path, fill);
-                painter.drawPolygon(poly);
+                maskPainter.fillRect(maskImg.rect(), fill);
+                
+                // Use a local path (0,0 to sw,sh)
+                QPainterPath polyPath = createMaskPath(m_points, QRectF(0, 0, sw, sh), scale, isRight, false);
+                
+                maskPainter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+                drawFeatheredPath(maskPainter, polyPath, Qt::black, m_featherAmount * scale);
+                maskPainter.end();
+                
+                painter.drawImage(target.topLeft(), maskImg);
             } else {
-                // In anaglyph mode, just draw the outline of the polygon
+                QPainterPath path = createMaskPath(m_points, v, scale, isRight, false);
                 painter.setPen(QPen(Qt::white, 1, Qt::DotLine));
-                painter.drawPolygon(poly);
+                painter.drawPath(path);
             }
 
             for (int i=0; i<m_points.count(); ++i) {
+                const auto &p = m_points[i];
+                QPointF pW = imageToWidget(p.pos, v, scale, isRight ? p.disparity : 0);
+                
+                // Draw Bezier handles if curve
+                if (p.isCurve) {
+                    int nextIdx = (i + 1) % m_points.count();
+                    QPointF nextW = imageToWidget(m_points[nextIdx].pos, v, scale, isRight ? m_points[nextIdx].disparity : 0);
+                    QPointF cp1W = imageToWidget(p.cp1, v, scale, isRight ? p.cp1Disparity : 0);
+                    QPointF cp2W = imageToWidget(p.cp2, v, scale, isRight ? p.cp2Disparity : 0);
+                    
+                    painter.setPen(QPen(Qt::gray, 1, Qt::DashLine));
+                    painter.drawLine(pW, cp1W);
+                    painter.drawLine(nextW, cp2W);
+                    
+                    painter.setBrush(Qt::green);
+                    painter.setPen(m_selectedPointIndex == i && m_hitType == HitCP1 ? QPen(Qt::cyan, 2) : QPen(Qt::white, 1));
+                    painter.drawRect(QRectF(cp1W.x()-3, cp1W.y()-3, 6, 6));
+                    
+                    painter.setPen(m_selectedPointIndex == i && m_hitType == HitCP2 ? QPen(Qt::cyan, 2) : QPen(Qt::white, 1));
+                    painter.drawRect(QRectF(cp2W.x()-3, cp2W.y()-3, 6, 6));
+                }
+
                 painter.setBrush(m_selectedIndices.contains(i) ? Qt::yellow : Qt::red);
-                painter.setPen(i == m_selectedPointIndex ? QPen(Qt::cyan, 2) : QPen(Qt::white, 1));
-                painter.drawEllipse(poly[i], 5, 5);
+                painter.setPen(i == m_selectedPointIndex && m_hitType == HitPoint ? QPen(Qt::cyan, 2) : QPen(Qt::white, 1));
+                painter.drawEllipse(pW, 5, 5);
             }
         }
         painter.restore();
@@ -378,26 +643,42 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
     }
 
     int hitIdx = -1;
+    m_hitType = HitNone;
     bool inRight = vR.contains(event->pos()) && !m_anaglyphMode;
     QRect targetV = inRight ? vR : vL;
     
     if (targetV.contains(event->pos())) {
         bool isRightEye = inRight ? !m_swapSides : m_swapSides;
         for (int i=0; i<m_points.count(); ++i) {
-            QPointF pW = imageToWidget(m_points[i].pos, targetV, scale, isRightEye ? m_points[i].disparity : 0);
-            if (QLineF(event->pos(), pW).length() < 20) { hitIdx = i; break; }
+            const auto &p = m_points[i];
+            QPointF pW = imageToWidget(p.pos, targetV, scale, isRightEye ? p.disparity : 0);
+            if (QLineF(event->pos(), pW).length() < 10) { hitIdx = i; m_hitType = HitPoint; break; }
+            
+            if (p.isCurve) {
+                QPointF cp1W = imageToWidget(p.cp1, targetV, scale, isRightEye ? p.cp1Disparity : 0);
+                if (QLineF(event->pos(), cp1W).length() < 10) { hitIdx = i; m_hitType = HitCP1; break; }
+                QPointF cp2W = imageToWidget(p.cp2, targetV, scale, isRightEye ? p.cp2Disparity : 0);
+                if (QLineF(event->pos(), cp2W).length() < 10) { hitIdx = i; m_hitType = HitCP2; break; }
+            }
         }
     }
 
     if (hitIdx != -1) {
-        if (event->modifiers() & Qt::ControlModifier) {
-            if (m_selectedIndices.contains(hitIdx)) m_selectedIndices.removeOne(hitIdx); else m_selectedIndices.append(hitIdx);
-        } else if (!m_selectedIndices.contains(hitIdx)) {
+        if (m_hitType == HitPoint) {
+            if (event->modifiers() & Qt::ControlModifier) {
+                if (m_selectedIndices.contains(hitIdx)) m_selectedIndices.removeOne(hitIdx); else m_selectedIndices.append(hitIdx);
+            } else if (!m_selectedIndices.contains(hitIdx)) {
+                m_selectedIndices.clear(); m_selectedIndices.append(hitIdx);
+            }
+        } else {
             m_selectedIndices.clear(); m_selectedIndices.append(hitIdx);
         }
+        
         m_selectedPointIndex = hitIdx;
         m_preMovePoints.clear(); for (int idx : m_selectedIndices) m_preMovePoints << m_points[idx];
-        setCursor(Qt::ClosedHandCursor); emit selectionChanged(m_points[hitIdx].disparity);
+        setCursor(Qt::ClosedHandCursor); 
+        float disp = (m_hitType == HitCP1) ? m_points[hitIdx].cp1Disparity : (m_hitType == HitCP2 ? m_points[hitIdx].cp2Disparity : m_points[hitIdx].disparity);
+        emit selectionChanged(disp);
     } else {
         if (event->button() == Qt::LeftButton) {
             if (vL.contains(event->pos()) || vR.contains(event->pos())) {
@@ -407,10 +688,46 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
         } else if (event->button() == Qt::RightButton && targetV.contains(event->pos())) {
             QPointF imgPos = widgetToImage(event->pos(), targetV, scale);
             bool isRightEye = inRight ? !m_swapSides : m_swapSides;
-            if (isRightEye) imgPos.setX(imgPos.x() + (m_points.isEmpty() ? 0 : m_points[0].disparity));
-            addPoint(imgPos, 0);
-            m_selectedPointIndex = m_points.count()-1; m_selectedIndices.clear(); m_selectedIndices << m_selectedPointIndex;
-            m_preMovePoints.clear(); m_preMovePoints << m_points.last();
+            float d = (m_points.isEmpty() ? 0 : m_points[0].disparity);
+            if (isRightEye) imgPos.setX(imgPos.x() + d);
+            
+            // Check if we clicked on an edge to insert
+            int insertIdx = -1;
+            float minEdgeDist = 10.0f; // px threshold
+            for (int i=0; i<m_points.count(); ++i) {
+                int nextIdx = (i + 1) % m_points.count();
+                const auto &p1 = m_points[i];
+                const auto &p2 = m_points[nextIdx];
+                QPointF p1W = imageToWidget(p1.pos, targetV, scale, isRightEye ? p1.disparity : 0);
+                QPointF p2W = imageToWidget(p2.pos, targetV, scale, isRightEye ? p2.disparity : 0);
+                
+                if (p1.isCurve) {
+                    // Approximate curve distance by sampling
+                    QPointF cp1W = imageToWidget(p1.cp1, targetV, scale, isRightEye ? p1.cp1Disparity : 0);
+                    QPointF cp2W = imageToWidget(p1.cp2, targetV, scale, isRightEye ? p1.cp2Disparity : 0);
+                    for (float t = 0.1f; t < 1.0f; t += 0.1f) {
+                        float it = 1.0f - t;
+                        QPointF b = it*it*it*p1W + 3*it*it*t*cp1W + 3*it*t*t*cp2W + t*t*t*p2W;
+                        if (QLineF(event->pos(), b).length() < minEdgeDist) { insertIdx = nextIdx; break; }
+                    }
+                } else {
+                    // Linear distance
+                    QLineF line(p1W, p2W);
+                    QPointF p3 = event->pos();
+                    float l2 = line.length() * line.length();
+                    if (l2 != 0) {
+                        float t = qBound(0.0f, (float)QPointF::dotProduct(p3 - p1W, p2W - p1W) / l2, 1.0f);
+                        QPointF projection = p1W + t * (p2W - p1W);
+                        if (QLineF(p3, projection).length() < minEdgeDist) insertIdx = nextIdx;
+                    }
+                }
+                if (insertIdx != -1) break;
+            }
+
+            addPoint(imgPos, d, insertIdx);
+            int newIdx = (insertIdx == -1) ? m_points.count()-1 : insertIdx;
+            m_selectedPointIndex = newIdx; m_selectedIndices.clear(); m_selectedIndices << m_selectedPointIndex; m_hitType = HitPoint;
+            m_preMovePoints.clear(); m_preMovePoints << m_points[newIdx];
         }
     }
     update();
@@ -430,28 +747,48 @@ void StereoViewWidget::mouseMoveEvent(QMouseEvent *event)
         float scale; QRect vL, vR; calculateLayout(vL, vR, scale);
         QPointF totalDelta((event->pos().x() - m_mouseDragStart.x()) / scale, (event->pos().y() - m_mouseDragStart.y()) / scale);
 
-        if (event->modifiers() & Qt::ShiftModifier) {
+        if (m_rotationMode != AxisNone) {
             float dx = (float)(event->pos().x() - m_lastMousePos.x());
-            for (int idx : m_selectedIndices) {
-                m_points[idx].disparity += dx / scale;
+            float dy = (float)(event->pos().y() - m_lastMousePos.y());
+            if (m_lockHorizontal) dx = 0; if (m_lockVertical) dy = 0;
+            
+            float angle = 0;
+            if (m_rotationMode == AxisX) angle = -dy; // Vertical drag tilts around X
+            else if (m_rotationMode == AxisY) angle = dx; // Horizontal drag tilts around Y
+            else if (m_rotationMode == AxisZ) angle = dx + dy; // Combined drag rolls around Z
+            
+            if (angle != 0) rotateSelectedPoints(angle, m_rotationMode);
+        } else if (event->modifiers() & Qt::ShiftModifier) {
+            float dx = (float)(event->pos().x() - m_lastMousePos.x()) / scale;
+            if (m_hitType == HitCP1) m_points[m_selectedPointIndex].cp1Disparity += dx;
+            else if (m_hitType == HitCP2) m_points[m_selectedPointIndex].cp2Disparity += dx;
+            else {
+                for (int idx : m_selectedIndices) m_points[idx].disparity += dx;
             }
-            emit selectionChanged(m_points[m_selectedPointIndex].disparity);
+            float disp = (m_hitType == HitCP1) ? m_points[m_selectedPointIndex].cp1Disparity : (m_hitType == HitCP2 ? m_points[m_selectedPointIndex].cp2Disparity : m_points[m_selectedPointIndex].disparity);
+            emit selectionChanged(disp);
         } else {
             if (m_lockHorizontal) totalDelta.setX(0); if (m_lockVertical) totalDelta.setY(0);
-            if (m_selectedIndices.count() == 1) {
-                bool inRight = !m_anaglyphMode && vR.contains(m_mouseDragStart);
-                float dragDisp = inRight ? (!m_swapSides ? m_preMovePoints[0].disparity : 0) : (m_swapSides ? m_preMovePoints[0].disparity : 0);
-                QPointF visualPos = (m_preMovePoints[0].pos - QPointF(dragDisp, 0)) + totalDelta;
-                float snap = 10.0f / scale;
-                for (int i=0; i<m_points.count(); ++i) {
-                    if (i == m_selectedPointIndex) continue;
-                    float tx = inRight ? (m_points[i].pos.x() - (!m_swapSides ? m_points[i].disparity : 0)) : (m_points[i].pos.x() - (m_swapSides ? m_points[i].disparity : 0));
-                    if (qAbs(visualPos.x() - tx) < snap) visualPos.setX(tx);
-                    if (qAbs(visualPos.y() - m_points[i].pos.y()) < snap) visualPos.setY(m_points[i].pos.y());
+            if (m_hitType == HitCP1) m_points[m_selectedPointIndex].cp1 = m_preMovePoints[0].cp1 + totalDelta;
+            else if (m_hitType == HitCP2) m_points[m_selectedPointIndex].cp2 = m_preMovePoints[0].cp2 + totalDelta;
+            else {
+                if (m_selectedIndices.count() == 1) {
+                    bool inRight = !m_anaglyphMode && vR.contains(m_mouseDragStart);
+                    float dragDisp = inRight ? (!m_swapSides ? m_preMovePoints[0].disparity : 0) : (m_swapSides ? m_preMovePoints[0].disparity : 0);
+                    QPointF visualPos = (m_preMovePoints[0].pos - QPointF(dragDisp, 0)) + totalDelta;
+                    float snap = 10.0f / scale;
+                    for (int i=0; i<m_points.count(); ++i) {
+                        if (i == m_selectedPointIndex) continue;
+                        float tx = inRight ? (m_points[i].pos.x() - (!m_swapSides ? m_points[i].disparity : 0)) : (m_points[i].pos.x() - (m_swapSides ? m_points[i].disparity : 0));
+                        if (m_snapEnabled) {
+                            if (qAbs(visualPos.x() - tx) < snap) visualPos.setX(tx);
+                            if (qAbs(visualPos.y() - m_points[i].pos.y()) < snap) visualPos.setY(m_points[i].pos.y());
+                        }
+                    }
+                    m_points[m_selectedPointIndex].pos = visualPos + QPointF(dragDisp, 0);
+                } else {
+                    for (int i=0; i<m_selectedIndices.count(); ++i) m_points[m_selectedIndices[i]].pos = m_preMovePoints[i].pos + totalDelta;
                 }
-                m_points[m_selectedPointIndex].pos = visualPos + QPointF(dragDisp, 0);
-            } else {
-                for (int i=0; i<m_selectedIndices.count(); ++i) m_points[m_selectedIndices[i]].pos = m_preMovePoints[i].pos + totalDelta;
             }
         }
         m_lastMousePos = event->pos(); update();
@@ -477,15 +814,16 @@ void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
         bool moved = false; QVector<MaskPoint> newPs;
         for (int i = 0; i < m_selectedIndices.count(); ++i) {
             newPs << m_points[m_selectedIndices[i]];
-            if (m_points[m_selectedIndices[i]].pos != m_preMovePoints[i].pos || m_points[m_selectedIndices[i]].disparity != m_preMovePoints[i].disparity) moved = true;
+            const auto &p = m_points[m_selectedIndices[i]];
+            const auto &pre = m_preMovePoints[i];
+            if (p.pos != pre.pos || p.disparity != pre.disparity || p.cp1 != pre.cp1 || p.cp1Disparity != pre.cp1Disparity || p.cp2 != pre.cp2 || p.cp2Disparity != pre.cp2Disparity || p.isCurve != pre.isCurve) moved = true;
         }
         if (moved) {
-            if (m_selectedIndices.count() == 1) m_undoStack->push(new MovePointCommand(this, m_selectedPointIndex, m_preMovePoints[0], m_points[m_selectedPointIndex]));
-            else m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, m_preMovePoints, newPs));
+            m_undoStack->push(new BatchMoveCommand(this, m_selectedIndices, m_preMovePoints, newPs));
             if (m_autoSave) saveProject();
         }
     }
-    m_selectedPointIndex = -1; setCursor(m_panMode ? Qt::OpenHandCursor : Qt::ArrowCursor); update();
+    m_selectedPointIndex = -1; m_hitType = HitNone; setCursor(m_panMode ? Qt::OpenHandCursor : Qt::ArrowCursor); update();
 }
 
 void StereoViewWidget::wheelEvent(QWheelEvent *event) 
@@ -521,11 +859,34 @@ void StereoViewWidget::setSelectedPointDisparity(int disparity)
 
 void StereoViewWidget::transformSelectedPoints(float scaleX, float scaleY, float dx, float dy)
 {
-    QList<int> indices = m_selectedIndices; if (indices.isEmpty()) for (int i = 0; i < m_points.count(); ++i) indices << i;
+    QList<int> indices = m_selectedIndices; 
+    if (indices.isEmpty()) for (int i = 0; i < m_points.count(); ++i) indices << i;
     if (indices.isEmpty()) return;
-    QPointF center(0, 0); for (int idx : indices) center += m_points[idx].pos; center /= (float)indices.count();
+
+    QPointF center(0, 0); 
+    float totalDisp = 0;
+    for (int idx : indices) {
+        center += m_points[idx].pos;
+        totalDisp += m_points[idx].disparity;
+    }
+    center /= (float)indices.count();
+    float avgDisp = totalDisp / (float)indices.count();
+
     QVector<MaskPoint> oldPs, newPs;
-    for (int idx : indices) { oldPs << m_points[idx]; MaskPoint p = m_points[idx]; p.pos = center + QPointF((p.pos.x() - center.x()) * scaleX, (p.pos.y() - center.y()) * scaleY) + QPointF(dx, dy); newPs << p; }
+    for (int idx : indices) {
+        oldPs << m_points[idx];
+        MaskPoint p = m_points[idx];
+        
+        // Transform main position
+        p.pos = center + QPointF((p.pos.x() - center.x()) * scaleX, (p.pos.y() - center.y()) * scaleY) + QPointF(dx, dy);
+        
+        // Transform handles if segment is a curve
+        if (p.isCurve) {
+            p.cp1 = center + QPointF((p.cp1.x() - center.x()) * scaleX, (p.cp1.y() - center.y()) * scaleY) + QPointF(dx, dy);
+            p.cp2 = center + QPointF((p.cp2.x() - center.x()) * scaleX, (p.cp2.y() - center.y()) * scaleY) + QPointF(dx, dy);
+        }
+        newPs << p;
+    }
     m_undoStack->push(new BatchMoveCommand(this, indices, oldPs, newPs));
     if (m_autoSave) saveProject();
 }
