@@ -2,6 +2,8 @@
 
 A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
 
+![StereoMask screenshot](Screenshot.jpg)
+
 ## New in v1.3.0
 
 - **Grouped Two-Row Toolbar:** Cleaner File/View and Edit/Mask toolbars with grouped controls.
@@ -20,7 +22,7 @@ A precision masking tool for side-by-side (SBS) stereo images, developed with **
 
 ## Core Features
 
-- **Modern Emoji Toolbar:** Intuitive controls for file operations, editing, and view modes.
+- **Grouped Toolbar:** Intuitive controls for file operations, editing, masking, and transforms.
 - **Precision Masking:** Add, move, and multi-select points to define custom masks for 3D images.
 - **Masked Anaglyph Preview:** Real-time 3D preview of your mask using Red/Cyan channels, supporting both parallel and cross-eye sources.
 - **Project Persistence (.msk):** Save your work as mask projects that store point data and project-specific settings.
