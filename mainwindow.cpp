@@ -297,6 +297,22 @@ void MainWindow::createToolbar()
     tb->addSeparator();
 
     // --- App Group ---
+    tb->addAction("🖍️", [this](){
+        QColor c = QColorDialog::getColor(m_viewWidget->maskColor(), this, tr("Select Mask Color"));
+        if (c.isValid()) m_viewWidget->setMaskColor(c);
+    })->setToolTip(tr("Quick Mask Color"));
+
+    m_opacitySpin = new QSpinBox;
+    m_opacitySpin->setRange(0, 100);
+    m_opacitySpin->setSuffix("%");
+    m_opacitySpin->setToolTip(tr("Quick Mask Opacity"));
+    m_opacitySpin->setValue(m_viewWidget->maskOpacity() * 100);
+    connect(m_opacitySpin, &QSpinBox::valueChanged, this, [this](int v){
+        m_viewWidget->setMaskOpacity(v / 100.0f);
+    });
+    tb->addWidget(m_opacitySpin);
+    tb->addSeparator();
+
     addBtn("⚙️", SLOT(showSettings()), tr("Mask Settings"));
     addBtn("❓", SLOT(showHelp()), tr("Help / Shortcuts"));
     addBtn("ℹ️", SLOT(showAbout()), tr("About StereoMask"));

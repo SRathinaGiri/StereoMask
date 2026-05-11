@@ -61,6 +61,7 @@ private:
     AppSettings m_settings;
     QMenu *m_recentFilesMenu;
     QAction *m_recentFileActions[5];
+    QSpinBox *m_opacitySpin;
 };
 
 #endif // MAINWINDOW_H

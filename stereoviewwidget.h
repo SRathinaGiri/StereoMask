@@ -38,6 +38,8 @@ public:
     void transformSelectedPoints(float scaleX, float scaleY, float dx, float dy);
 
     void setMaskSettings(const QColor &color, float opacity) { m_maskColor = color; m_maskOpacity = opacity; updateAnaglyphIfActive(); update(); }
+    void setMaskColor(const QColor &color) { m_maskColor = color; updateAnaglyphIfActive(); update(); }
+    void setMaskOpacity(float opacity) { m_maskOpacity = opacity; updateAnaglyphIfActive(); update(); }
     void setPaddingSettings(int px, int py, const QColor &bg, int interleaving) { m_padx = px; m_pady = py; m_bgColor = bg; m_interleavingSpace = interleaving; }
 
     void updateAnaglyphIfActive();
