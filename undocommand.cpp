@@ -1,5 +1,7 @@
 #include "undocommand.h"
 #include "stereoviewwidget.h"
+#include <algorithm>
+#include <utility>
 
 MovePointCommand::MovePointCommand(StereoViewWidget *widget, int index, const MaskPoint &oldP, const MaskPoint &newP)
     : m_widget(widget), m_index(index), m_oldPoint(oldP), m_newPoint(newP)
@@ -25,8 +27,31 @@ DeletePointsCommand::DeletePointsCommand(StereoViewWidget *widget, const QList<i
     setText("Delete Points");
 }
 
-void DeletePointsCommand::undo() { m_widget->insertPointsInternal(m_indices, m_points); }
-void DeletePointsCommand::redo() { m_widget->removePointsInternal(m_indices); }
+void DeletePointsCommand::undo()
+{
+    QVector<std::pair<int, MaskPoint>> pairs;
+    for (int i = 0; i < m_indices.count() && i < m_points.count(); ++i) {
+        pairs.append({m_indices[i], m_points[i]});
+    }
+    std::sort(pairs.begin(), pairs.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first;
+    });
+
+    QList<int> indices;
+    QVector<MaskPoint> points;
+    for (const auto &pair : pairs) {
+        indices.append(pair.first);
+        points.append(pair.second);
+    }
+    m_widget->insertPointsInternal(indices, points);
+}
+
+void DeletePointsCommand::redo()
+{
+    QList<int> indices = m_indices;
+    std::sort(indices.begin(), indices.end(), std::greater<int>());
+    m_widget->removePointsInternal(indices);
+}
 
 BatchMoveCommand::BatchMoveCommand(StereoViewWidget *widget, const QList<int> &indices, const QVector<MaskPoint> &oldPoints, const QVector<MaskPoint> &newPoints)
     : m_widget(widget), m_indices(indices), m_oldPoints(oldPoints), m_newPoints(newPoints)

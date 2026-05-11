@@ -1,6 +1,14 @@
-# StereoMask v1.2
+# StereoMask v1.3.0
 
 A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
+
+## New in v1.3.0
+
+- **Grouped Two-Row Toolbar:** Cleaner File/View and Edit/Mask toolbars with grouped controls.
+- **Custom Scalable Icons:** Replaced emoji and legacy 16px icons with a consistent in-app vector icon set.
+- **Curve-Aware Rotation:** Curve and Rx/Ry/Rz controls are grouped together; rotation is enabled only for curved selections.
+- **Async Export:** Export runs off the UI thread and reports success/failure accurately.
+- **Safer Image Handling:** Added SBS dimension validation and bounded image allocation.
 
 ## New in v1.2
 

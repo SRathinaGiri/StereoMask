@@ -6,10 +6,12 @@
 #include <QJsonObject>
 #include <QStringList>
 #include <QTimer>
+#include <QList>
 
 class StereoViewWidget;
 class QSpinBox;
-class QSlider;
+class QAction;
+template <typename T> class QFutureWatcher;
 
 struct AppSettings {
     QColor maskColor = Qt::black;
@@ -66,6 +68,8 @@ private:
     QMenu *m_recentFilesMenu;
     QAction *m_recentFileActions[5];
     QSpinBox *m_opacitySpin;
+    QFutureWatcher<bool> *m_exportWatcher;
+    QList<QAction*> m_rotationActions;
 };
 
 #endif // MAINWINDOW_H

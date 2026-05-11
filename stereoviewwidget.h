@@ -20,7 +20,8 @@ public:
     bool loadProject(const QString &fileName);
     bool saveProject();
     QString lastError() const { return m_lastError; }
-    void saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace, std::function<void(int)> progressCallback = nullptr);
+    bool saveImage(const QString &fileName, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace, std::function<void(int)> progressCallback = nullptr);
+    static bool saveImageData(const QString &fileName, const QImage &leftImage, const QImage &rightImage, const QVector<MaskPoint> &points, const QColor &maskColor, float opacity, int padx, int pady, const QColor &bgColor, int interleavingSpace, int featherAmount, std::function<void(int)> progressCallback = nullptr);
     
     bool isImageLoaded() const { return !m_imagePath.isEmpty() && m_processor.isValid(); }
     void setAnaglyphMode(bool enabled);
@@ -58,6 +59,10 @@ public:
     bool snapEnabled() const { return m_snapEnabled; }
     QColor bgColor() const { return m_bgColor; }
     int interleavingSpace() const { return m_interleavingSpace; }
+    bool hasCurveSelection() const;
+    QImage leftImage() const { return m_processor.leftImage(); }
+    QImage rightImage() const { return m_processor.rightImage(); }
+    QVector<MaskPoint> points() const { return m_points; }
 
     void setAutoSave(bool enabled) { m_autoSave = enabled; }
 
@@ -74,6 +79,7 @@ public:
 
 signals:
     void selectionChanged(int currentDisparity);
+    void curveSelectionChanged(bool hasCurveSelection);
 
 public:
     // Internal methods for Undo Commands
@@ -99,6 +105,7 @@ private:
     QPointF widgetToImage(const QPoint &pos, const QRect &targetRect, float scale);
     QPointF imageToWidget(const QPointF &pos, const QRect &targetRect, float scale, float disparity = 0);
     void calculateLayout(QRect &rL, QRect &rR, float &scale);
+    void notifySelectionState();
 
     enum ControlPointType { HitNone, HitPoint, HitCP1, HitCP2 };
     ControlPointType m_hitType = HitNone;

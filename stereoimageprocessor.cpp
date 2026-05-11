@@ -4,7 +4,6 @@
 #include <QDebug>
 #include <QImageReader>
 #include <QFile>
-#include <QBuffer>
 
 StereoImageProcessor::StereoImageProcessor()
 {
@@ -20,12 +19,9 @@ bool StereoImageProcessor::loadSideBySide(const QString &fileName)
         return false;
     }
 
-    QByteArray data = file.readAll();
-    QBuffer buffer(&data);
-    QImageReader reader(&buffer);
-    
-    // Disable the default allocation limit (usually 128MB) to handle very large images
-    reader.setAllocationLimit(0);
+    QImageReader reader(&file);
+    reader.setAutoTransform(true);
+    reader.setAllocationLimit(512);
 
     if (!reader.canRead()) {
         m_lastError = QString("Qt Image IO: %1 (Format: %2)")
@@ -36,6 +32,22 @@ bool StereoImageProcessor::loadSideBySide(const QString &fileName)
 
     QSize imgSize = reader.size();
     qDebug() << "Attempting to load image:" << imgSize.width() << "x" << imgSize.height();
+
+    if (!imgSize.isValid() || imgSize.width() < 2 || imgSize.height() < 1 || (imgSize.width() % 2) != 0) {
+        m_lastError = QString("Invalid SBS image size: %1x%2. Width must be an even number.")
+                        .arg(imgSize.width())
+                        .arg(imgSize.height());
+        return false;
+    }
+
+    constexpr qsizetype maxPixels = 20000LL * 20000LL;
+    const qsizetype pixelCount = qsizetype(imgSize.width()) * qsizetype(imgSize.height());
+    if (pixelCount <= 0 || pixelCount > maxPixels) {
+        m_lastError = QString("Image is too large: %1x%2.")
+                        .arg(imgSize.width())
+                        .arg(imgSize.height());
+        return false;
+    }
 
     QImage fullImage = reader.read();
     if (fullImage.isNull()) {
