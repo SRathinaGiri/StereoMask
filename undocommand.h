@@ -3,6 +3,7 @@
 
 #include <QUndoCommand>
 #include <QVector>
+#include <QString>
 #include "maskpoint.h"
 
 class StereoViewWidget;
@@ -52,6 +53,19 @@ class DeletePointsCommand : public QUndoCommand
 {
 public:
     DeletePointsCommand(StereoViewWidget *widget, const QList<int> &indices, const QVector<MaskPoint> &points);
+    void undo() override;
+    void redo() override;
+
+private:
+    StereoViewWidget *m_widget;
+    QList<int> m_indices;
+    QVector<MaskPoint> m_points;
+};
+
+class InsertPointsCommand : public QUndoCommand
+{
+public:
+    InsertPointsCommand(StereoViewWidget *widget, const QList<int> &indices, const QVector<MaskPoint> &points, const QString &text = QStringLiteral("Insert Points"));
     void undo() override;
     void redo() override;
 

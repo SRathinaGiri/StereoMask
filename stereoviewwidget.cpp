@@ -6,11 +6,22 @@
 #include <QPainterPath>
 #include <QDebug>
 #include <QWheelEvent>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QFileInfo>
+#include <QTimer>
 #include <QtMath>
+#include <algorithm>
+#include <limits>
+#include <numeric>
+#include <stack>
+#include <vector>
+
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 static QPainterPath createImageMaskPath(const QVector<MaskPoint> &pts, const QRectF &v, float scale, bool isRight, bool includeRect)
 {
@@ -135,6 +146,174 @@ StereoViewWidget::StereoViewWidget(QWidget *parent)
     setAutoFillBackground(true);
     setMouseTracking(true);
     m_undoStack = new QUndoStack(this);
+    m_autoMaskDebugTimer = new QTimer(this);
+    m_autoMaskDebugTimer->setInterval(1000);
+    connect(m_autoMaskDebugTimer, &QTimer::timeout, this, [this]() {
+        if (m_autoMaskDebugFrameIndex + 1 < m_autoMaskDebugFrames.size()) {
+            ++m_autoMaskDebugFrameIndex;
+        } else {
+            m_autoMaskDebugTimer->stop();
+            m_autoMaskDebugFrames.clear();
+            m_autoMaskDebugFrameIndex = -1;
+            if (!m_pendingAutoMaskPoints.isEmpty() && m_points.isEmpty()) {
+                QList<int> indices;
+                for (int i = 0; i < m_pendingAutoMaskPoints.size(); ++i) indices.append(i);
+                m_undoStack->push(new InsertPointsCommand(this, indices, m_pendingAutoMaskPoints, m_pendingAutoMaskText));
+                if (m_autoSave) saveProject();
+                emit maskEmptyChanged(false);
+            }
+            m_pendingAutoMaskPoints.clear();
+            m_pendingAutoMaskText.clear();
+        }
+        update();
+    });
+}
+
+namespace {
+struct CvAutoMaskPoint {
+    QPointF point;
+    float disparity = 0.0f;
+};
+
+struct CvAutoMaskResult {
+    bool ok = false;
+    float disparity = 0.0f;
+    QVector<CvAutoMaskPoint> points;
+    QString method;
+};
+
+static cv::Mat qImageToBgrMat(const QImage &image)
+{
+    QImage rgb32 = image.convertToFormat(QImage::Format_RGB32);
+    cv::Mat bgra(rgb32.height(), rgb32.width(), CV_8UC4,
+                 const_cast<uchar*>(rgb32.constBits()),
+                 static_cast<size_t>(rgb32.bytesPerLine()));
+    cv::Mat bgr;
+    cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
+    return bgr;
+}
+
+static QVector<QPointF> polygonFromMaskContour(const cv::Mat &mask, double scale, int maxPoints)
+{
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    if (contours.empty()) return {};
+
+    auto largest = std::max_element(contours.begin(), contours.end(), [](const auto &a, const auto &b) {
+        return cv::contourArea(a) < cv::contourArea(b);
+    });
+    if (largest == contours.end() || cv::contourArea(*largest) < 100.0) return {};
+
+    std::vector<cv::Point> approx;
+    double epsilon = std::max(2.0, 0.004 * cv::arcLength(*largest, true));
+    cv::approxPolyDP(*largest, approx, epsilon, true);
+
+    while ((int)approx.size() > maxPoints && epsilon < 80.0) {
+        epsilon *= 1.35;
+        cv::approxPolyDP(*largest, approx, epsilon, true);
+    }
+
+    QVector<QPointF> polygon;
+    polygon.reserve(static_cast<int>(approx.size()));
+    for (const cv::Point &p : approx) {
+        polygon.append(QPointF(p.x * scale, p.y * scale));
+    }
+    return polygon;
+}
+
+static float medianDisparityNear(const cv::Mat &disp, const QPointF &fullPoint, double scale, float fallback)
+{
+    const int cx = qBound(0, qRound(fullPoint.x() / scale), disp.cols - 1);
+    const int cy = qBound(0, qRound(fullPoint.y() / scale), disp.rows - 1);
+    std::vector<float> values;
+    values.reserve(81);
+    for (int dy = -4; dy <= 4; ++dy) {
+        int y = cy + dy;
+        if (y < 0 || y >= disp.rows) continue;
+        const float *row = disp.ptr<float>(y);
+        for (int dx = -4; dx <= 4; ++dx) {
+            int x = cx + dx;
+            if (x < 0 || x >= disp.cols) continue;
+            if (row[x] > 0.0f) values.push_back(row[x]);
+        }
+    }
+    if (values.empty()) return fallback;
+    std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+    return values[values.size() / 2] * scale;
+}
+
+static CvAutoMaskResult computeCvAutoMask(const QImage &leftImage, const QImage &rightImage)
+{
+    const cv::Mat left = qImageToBgrMat(leftImage);
+    const cv::Mat right = qImageToBgrMat(rightImage);
+
+    const int w = left.cols;
+    const int h = left.rows;
+    const int analysisW = std::min(720, w);
+    const int analysisH = std::max(1, qRound(h * (double)analysisW / w));
+    const double scale = (double)w / analysisW;
+
+    cv::Mat leftS;
+    cv::Mat rightS;
+    cv::resize(left, leftS, cv::Size(analysisW, analysisH), 0, 0, cv::INTER_AREA);
+    cv::resize(right, rightS, cv::Size(analysisW, analysisH), 0, 0, cv::INTER_AREA);
+
+    cv::Mat grayL;
+    cv::Mat grayR;
+    cv::cvtColor(leftS, grayL, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(rightS, grayR, cv::COLOR_BGR2GRAY);
+
+    int numDisp = std::max(16, ((analysisW / 5) / 16) * 16);
+    auto matcherL = cv::StereoSGBM::create(0, numDisp, 5, 8 * 5 * 5, 32 * 5 * 5, 1, 0, 8, 80, 24, cv::StereoSGBM::MODE_SGBM_3WAY);
+    auto matcherR = cv::StereoSGBM::create(-numDisp, numDisp, 5, 8 * 5 * 5, 32 * 5 * 5, 1, 0, 8, 80, 24, cv::StereoSGBM::MODE_SGBM_3WAY);
+
+    cv::Mat dispL16;
+    cv::Mat dispR16;
+    matcherL->compute(grayL, grayR, dispL16);
+    matcherR->compute(grayR, grayL, dispR16);
+    cv::Mat dispL;
+    cv::Mat dispR;
+    dispL16.convertTo(dispL, CV_32F, 1.0 / 16.0);
+    dispR16.convertTo(dispR, CV_32F, 1.0 / 16.0);
+
+    cv::Mat validMask = cv::Mat::zeros(analysisH, analysisW, CV_8U);
+    for (int y = 0; y < analysisH; ++y) {
+        const float *dl = dispL.ptr<float>(y);
+        uchar *mr = validMask.ptr<uchar>(y);
+        for (int x = 0; x < analysisW; ++x) {
+            float d = dl[x];
+            int xr = qRound(x - d);
+            if (d > 0 && xr >= 0 && xr < analysisW && std::abs(d + dispR.at<float>(y, xr)) <= 1.75f) {
+                mr[x] = 1;
+            }
+        }
+    }
+    cv::morphologyEx(validMask, validMask, cv::MORPH_CLOSE, cv::Mat::ones(9, 9, CV_8U));
+    cv::morphologyEx(validMask, validMask, cv::MORPH_OPEN, cv::Mat::ones(5, 5, CV_8U));
+
+    std::vector<float> valid;
+    for (int y = 0; y < dispL.rows; ++y) {
+        const float *row = dispL.ptr<float>(y);
+        for (int x = 0; x < dispL.cols; ++x) {
+            if (row[x] > 0) valid.push_back(row[x]);
+        }
+    }
+    float disparity = 0.0f;
+    if (!valid.empty()) {
+        std::nth_element(valid.begin(), valid.begin() + valid.size() / 2, valid.end());
+        disparity = valid[valid.size() / 2] * scale;
+    }
+
+    QVector<QPointF> polygon = polygonFromMaskContour(validMask, scale, 28);
+    CvAutoMaskResult result;
+    result.ok = polygon.size() >= 3;
+    result.disparity = disparity;
+    result.method = QStringLiteral("sgbm-contour");
+    for (const QPointF &point : polygon) {
+        result.points.append({point, medianDisparityNear(dispL, point, scale, disparity)});
+    }
+    return result;
+}
 }
 
 bool StereoViewWidget::loadImage(const QString &fileName)
@@ -179,6 +358,8 @@ bool StereoViewWidget::loadImage(const QString &fileName)
         }
         m_zoom = 1.0f;
         updateAnaglyphIfActive();
+        notifySelectionState();
+        notifyMaskState();
         update();
         return true;
     }
@@ -297,6 +478,8 @@ bool StereoViewWidget::loadProject(const QString &path)
     }
     m_zoom = 1.0f;
     m_panOffset = QPointF(0, 0);
+    notifySelectionState();
+    notifyMaskState();
     update();
     return true;
 }
@@ -402,11 +585,416 @@ void StereoViewWidget::notifySelectionState()
     emit curveSelectionChanged(hasCurveSelection());
 }
 
+void StereoViewWidget::notifyMaskState()
+{
+    emit maskEmptyChanged(m_points.isEmpty());
+}
+
+void StereoViewWidget::setFreehandMode(bool enabled)
+{
+    m_freehandMode = enabled && m_processor.isValid() && m_points.isEmpty();
+    if (!m_freehandMode) {
+        m_isFreehandDrawing = false;
+        m_freehandPoints.clear();
+    }
+    setCursor(m_freehandMode ? Qt::CrossCursor : (m_panMode ? Qt::OpenHandCursor : Qt::ArrowCursor));
+    emit freehandModeChanged(m_freehandMode);
+    update();
+}
+
+double StereoViewWidget::pointLineDistance(const QPointF &point, const QPointF &lineStart, const QPointF &lineEnd) const
+{
+    QPointF segment = lineEnd - lineStart;
+    double lengthSquared = QPointF::dotProduct(segment, segment);
+    if (lengthSquared <= 0.0001) return QLineF(point, lineStart).length();
+    double t = QPointF::dotProduct(point - lineStart, segment) / lengthSquared;
+    t = qBound(0.0, t, 1.0);
+    return QLineF(point, lineStart + segment * t).length();
+}
+
+QVector<QPointF> StereoViewWidget::simplifyFreehandPath(const QVector<QPointF> &points, double tolerance) const
+{
+    if (points.size() < 3) return points;
+    double maxDistance = 0.0;
+    int splitIndex = 0;
+    for (int i = 1; i < points.size() - 1; ++i) {
+        double distance = pointLineDistance(points[i], points.first(), points.last());
+        if (distance > maxDistance) {
+            maxDistance = distance;
+            splitIndex = i;
+        }
+    }
+    if (maxDistance <= tolerance) return {points.first(), points.last()};
+    QVector<QPointF> left = simplifyFreehandPath(points.mid(0, splitIndex + 1), tolerance);
+    QVector<QPointF> right = simplifyFreehandPath(points.mid(splitIndex), tolerance);
+    if (!left.isEmpty()) left.removeLast();
+    left += right;
+    return left;
+}
+
+int StereoViewWidget::edgeStrengthAt(const QImage &image, int x, int y) const
+{
+    if (x <= 0 || y <= 0 || x >= image.width() - 1 || y >= image.height() - 1) return 0;
+    auto gray = [&](int px, int py) { return qGray(image.pixel(px, py)); };
+    int gx = -gray(x - 1, y - 1) + gray(x + 1, y - 1)
+             -2 * gray(x - 1, y) + 2 * gray(x + 1, y)
+             -gray(x - 1, y + 1) + gray(x + 1, y + 1);
+    int gy = -gray(x - 1, y - 1) - 2 * gray(x, y - 1) - gray(x + 1, y - 1)
+             +gray(x - 1, y + 1) + 2 * gray(x, y + 1) + gray(x + 1, y + 1);
+    return qAbs(gx) + qAbs(gy);
+}
+
+QVector<QPointF> StereoViewWidget::snapFreehandPathToEdges(const QVector<QPointF> &points) const
+{
+    return points;
+}
+
+QVector<QPointF> StereoViewWidget::smoothFreehandPath(const QVector<QPointF> &points) const
+{
+    if (points.size() < 5) return points;
+    QVector<QPointF> smoothed;
+    smoothed.reserve(points.size());
+    for (int i = 0; i < points.size(); ++i) {
+        const QPointF prev = points[(i - 1 + points.size()) % points.size()];
+        const QPointF current = points[i];
+        const QPointF next = points[(i + 1) % points.size()];
+        smoothed.append(prev * 0.2 + current * 0.6 + next * 0.2);
+    }
+    return smoothed;
+}
+
+QVector<QPointF> StereoViewWidget::limitFreehandPointCount(const QVector<QPointF> &points, int maxPoints) const
+{
+    if (points.size() <= maxPoints || maxPoints < 3) return points;
+    QVector<QPointF> limited;
+    limited.reserve(maxPoints);
+    for (int i = 0; i < maxPoints; ++i) {
+        int index = qRound((double)i * (points.size() - 1) / (maxPoints - 1));
+        limited.append(points[index]);
+    }
+    return limited;
+}
+
+int StereoViewWidget::estimateGlobalDisparity() const
+{
+    if (!m_processor.isValid()) return 0;
+    const QImage left = m_processor.leftImage().scaledToWidth(320, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+    const QImage right = m_processor.rightImage().scaled(left.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+    const int maxShift = qMax(8, left.width() / 6);
+    double bestScore = std::numeric_limits<double>::max();
+    int bestShift = 0;
+    for (int shift = -maxShift; shift <= maxShift; ++shift) {
+        int xStart = qMax(0, shift);
+        int xEnd = qMin(left.width(), left.width() + shift);
+        if (xEnd - xStart < left.width() / 2) continue;
+        qint64 sad = 0;
+        int samples = 0;
+        for (int y = 0; y < left.height(); y += 3) {
+            const QRgb *leftLine = reinterpret_cast<const QRgb*>(left.constScanLine(y));
+            const QRgb *rightLine = reinterpret_cast<const QRgb*>(right.constScanLine(y));
+            for (int x = xStart; x < xEnd; x += 3) {
+                sad += qAbs(qGray(leftLine[x]) - qGray(rightLine[x - shift]));
+                ++samples;
+            }
+        }
+        if (samples > 0 && (double)sad / samples < bestScore) {
+            bestScore = (double)sad / samples;
+            bestShift = shift;
+        }
+    }
+    return qRound(bestShift * (double)m_processor.leftImage().width() / left.width());
+}
+
+bool StereoViewWidget::createAutoMaskPoints()
+{
+    if (!canAutoMask()) return false;
+    if (m_autoMaskDebugTimer) m_autoMaskDebugTimer->stop();
+    m_autoMaskDebugFrames.clear();
+    m_pendingAutoMaskPoints.clear();
+    m_pendingAutoMaskText.clear();
+    m_autoMaskDebugFrameIndex = -1;
+
+    const int iw = m_processor.leftImage().width();
+    const int ih = m_processor.leftImage().height();
+    if (iw <= 1 || ih <= 1) return false;
+
+    CvAutoMaskResult cvMask;
+    try {
+        cvMask = computeCvAutoMask(m_processor.leftImage(), m_processor.rightImage());
+    } catch (const cv::Exception &e) {
+        qWarning() << "OpenCV auto mask failed:" << e.what();
+    }
+    if (cvMask.ok && cvMask.points.size() >= 3) {
+        const double border = qMax(4.0, qMin(iw, ih) * 0.015);
+        auto clampBoth = [&](QPointF p, float pointDisparity) {
+            double minX = qMax(border, border + pointDisparity);
+            double maxX = qMin(iw - border, iw - border + pointDisparity);
+            if (minX > maxX) minX = maxX = qBound(border, iw / 2.0 + pointDisparity * 0.5, iw - border);
+            p.setX(qBound(minX, p.x(), maxX));
+            p.setY(qBound(border, p.y(), ih - border));
+            return p;
+        };
+
+        QVector<MaskPoint> autoPoints;
+        QList<int> indices;
+        QVector<QPointF> debugPolygon;
+        for (const CvAutoMaskPoint &point : cvMask.points) {
+            QPointF clamped = clampBoth(point.point, point.disparity);
+            debugPolygon.append(clamped);
+            autoPoints.append({clamped, point.disparity});
+            indices.append(autoPoints.size() - 1);
+        }
+
+        if (autoPoints.size() >= 3) {
+            m_selectedIndices.clear();
+            m_selectedPointIndex = -1;
+            m_undoStack->push(new InsertPointsCommand(this, indices, autoPoints, tr("OpenCV Auto Mask")));
+            if (m_autoSave) saveProject();
+            notifySelectionState();
+            notifyMaskState();
+            update();
+            return true;
+        }
+    }
+
+    const int disparity = estimateGlobalDisparity();
+    const int analysisW = qMin(480, iw);
+    const int analysisH = qMax(1, qRound(ih * (double)analysisW / iw));
+    const double scaleToFull = (double)iw / analysisW;
+    const QImage left = m_processor.leftImage().scaled(analysisW, analysisH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+    const QImage right = m_processor.rightImage().scaled(analysisW, analysisH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+    const int shift = qRound(disparity / scaleToFull);
+
+    QVector<uchar> coverage(analysisW * analysisH, 0);
+    QVector<double> scores;
+    scores.reserve(analysisW * analysisH / 4);
+    for (int y = 0; y < analysisH; y += 2) {
+        const QRgb *ll = reinterpret_cast<const QRgb*>(left.constScanLine(y));
+        const QRgb *rr = reinterpret_cast<const QRgb*>(right.constScanLine(y));
+        for (int x = 0; x < analysisW; x += 2) {
+            int rx = x - shift;
+            if (rx < 0 || rx >= analysisW) continue;
+            scores.append(qAbs(qGray(ll[x]) - qGray(rr[rx])));
+        }
+    }
+    if (scores.isEmpty()) return false;
+    std::sort(scores.begin(), scores.end());
+    const double threshold = qBound(18.0, scores[scores.size() / 2] * 1.6 + 10.0, 64.0);
+    for (int y = 0; y < analysisH; ++y) {
+        const QRgb *ll = reinterpret_cast<const QRgb*>(left.constScanLine(y));
+        const QRgb *rr = reinterpret_cast<const QRgb*>(right.constScanLine(y));
+        for (int x = 0; x < analysisW; ++x) {
+            int rx = x - shift;
+            if (rx < 0 || rx >= analysisW) continue;
+            if (qAbs(qGray(ll[x]) - qGray(rr[rx])) <= threshold) coverage[y * analysisW + x] = 1;
+        }
+    }
+
+    struct RectI { int x = 0; int y = 0; int w = 0; int h = 0; int area() const { return w * h; } };
+    auto largestRectInMask = [&](const QVector<uchar> &mask, int w, int h) {
+        QVector<int> heights(w, 0);
+        RectI best;
+        int bestArea = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) heights[x] = mask[y * w + x] ? heights[x] + 1 : 0;
+            std::stack<int> stack;
+            for (int x = 0; x <= w; ++x) {
+                int currentHeight = (x == w) ? 0 : heights[x];
+                while (!stack.empty() && heights[stack.top()] > currentHeight) {
+                    int height = heights[stack.top()];
+                    stack.pop();
+                    int width = stack.empty() ? x : x - stack.top() - 1;
+                    int area = height * width;
+                    if (area > bestArea) {
+                        int leftX = stack.empty() ? 0 : stack.top() + 1;
+                        best = {leftX, y - height + 1, width, height};
+                        bestArea = area;
+                    }
+                }
+                stack.push(x);
+            }
+        }
+        return best;
+    };
+    auto transposeMask = [](const QVector<uchar> &mask, int w, int h) {
+        QVector<uchar> out(w * h, 0);
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) out[x * h + y] = mask[y * w + x];
+        return out;
+    };
+    auto clearRect = [](QVector<uchar> &mask, int w, const RectI &r) {
+        for (int y = r.y; y < r.y + r.h; ++y) for (int x = r.x; x < r.x + r.w; ++x) mask[y * w + x] = 0;
+    };
+    auto toPoly = [&](const RectI &r) {
+        QRectF rf(r.x * scaleToFull, r.y * scaleToFull, r.w * scaleToFull, r.h * scaleToFull);
+        return QVector<QPointF>{rf.topLeft(), rf.bottomLeft(), rf.bottomRight(), rf.topRight()};
+    };
+
+    QVector<RectI> tiles;
+    QVector<uchar> work = coverage;
+    RectI seed = largestRectInMask(work, analysisW, analysisH);
+    const int minArea = qMax(300, analysisW * analysisH / 350);
+    if (seed.area() < minArea) return false;
+    tiles.append(seed);
+    clearRect(work, analysisW, seed);
+    m_autoMaskDebugFrames.append({{}, {}, {toPoly(seed)}, {(float)disparity}, (float)disparity, tr("Seed rectangle")});
+
+    bool horizontal = true;
+    for (int iter = 0; iter < 50; ++iter) {
+        RectI candidate;
+        if (horizontal) {
+            QVector<uchar> t = transposeMask(work, analysisW, analysisH);
+            RectI tr = largestRectInMask(t, analysisH, analysisW);
+            candidate = {tr.y, tr.x, tr.h, tr.w};
+        } else {
+            candidate = largestRectInMask(work, analysisW, analysisH);
+        }
+        if (candidate.area() < minArea) break;
+        tiles.append(candidate);
+        clearRect(work, analysisW, candidate);
+        QVector<QVector<QPointF>> framePolys;
+        QVector<float> frameDisps;
+        for (const RectI &tile : tiles) {
+            framePolys.append(toPoly(tile));
+            frameDisps.append((float)disparity);
+        }
+        m_autoMaskDebugFrames.append({{}, {}, framePolys, frameDisps, (float)disparity,
+                                      tr("%1 rectangle %2").arg(horizontal ? tr("Horizontal") : tr("Vertical")).arg(iter + 2)});
+        horizontal = !horizontal;
+    }
+
+    QVector<double> ySamples;
+    for (const RectI &tile : tiles) {
+        ySamples << tile.y * scaleToFull << (tile.y + tile.h * 0.5) * scaleToFull << (tile.y + tile.h) * scaleToFull;
+    }
+    std::sort(ySamples.begin(), ySamples.end());
+    QVector<QPointF> leftBoundary;
+    QVector<QPointF> rightBoundary;
+    for (double y : ySamples) {
+        double leftX = iw;
+        double rightX = 0;
+        bool any = false;
+        double ay = y / scaleToFull;
+        for (const RectI &tile : tiles) {
+            if (ay < tile.y || ay > tile.y + tile.h) continue;
+            leftX = qMin(leftX, tile.x * scaleToFull);
+            rightX = qMax(rightX, (tile.x + tile.w) * scaleToFull);
+            any = true;
+        }
+        if (any && rightX > leftX) {
+            leftBoundary.append(QPointF(leftX, y));
+            rightBoundary.append(QPointF(rightX, y));
+        }
+    }
+    QVector<QPointF> polygon = leftBoundary;
+    for (int i = rightBoundary.size() - 1; i >= 0; --i) polygon.append(rightBoundary[i]);
+    polygon = limitFreehandPointCount(polygon, 18);
+    if (polygon.size() < 4) return false;
+
+    const double border = qMax(4.0, qMin(iw, ih) * 0.015);
+    auto clampBoth = [&](QPointF p) {
+        double minX = qMax(border, border + disparity);
+        double maxX = qMin(iw - border, iw - border + disparity);
+        if (minX > maxX) minX = maxX = qBound(border, iw / 2.0 + disparity * 0.5, iw - border);
+        p.setX(qBound(minX, p.x(), maxX));
+        p.setY(qBound(border, p.y(), ih - border));
+        return p;
+    };
+    QVector<MaskPoint> autoPoints;
+    QList<int> indices;
+    for (int i = 0; i < polygon.size(); ++i) {
+        autoPoints.append({clampBoth(polygon[i]), (float)disparity});
+        indices.append(i);
+    }
+    m_pendingAutoMaskPoints = autoPoints;
+    m_pendingAutoMaskText = tr("Smart Auto Mask");
+    m_autoMaskDebugFrames.append({{}, polygon, {}, {}, (float)disparity, tr("Final editable mask")});
+    startAutoMaskDebugPlayback();
+    return true;
+}
+
+void StereoViewWidget::appendFreehandPoint(const QPoint &widgetPos)
+{
+    QPointF imagePos = widgetToImage(widgetPos, m_freehandViewport, m_freehandScale);
+    if (imagePos.x() < 0 || imagePos.y() < 0 || imagePos.x() > m_processor.leftImage().width() || imagePos.y() > m_processor.leftImage().height()) return;
+    if (m_freehandPoints.isEmpty() || QLineF(m_freehandPoints.last(), imagePos).length() >= 5.0) {
+        m_freehandPoints.append(imagePos);
+        update();
+    }
+}
+
+void StereoViewWidget::finishFreehandDrawing()
+{
+    m_isFreehandDrawing = false;
+    QVector<QPointF> simplified = limitFreehandPointCount(simplifyFreehandPath(smoothFreehandPath(m_freehandPoints), 10.0), 40);
+    m_freehandPoints.clear();
+    if (simplified.size() < 3) { update(); return; }
+    QVector<MaskPoint> newPoints;
+    QList<int> indices;
+    for (int i = 0; i < simplified.size(); ++i) {
+        newPoints.append({simplified[i], 0});
+        indices.append(i);
+    }
+    m_undoStack->push(new InsertPointsCommand(this, indices, newPoints, tr("Freehand Mask")));
+    setFreehandMode(false);
+    if (m_autoSave) saveProject();
+}
+
+void StereoViewWidget::startAutoMaskDebugPlayback()
+{
+    if (m_autoMaskDebugFrames.isEmpty() || !m_autoMaskDebugTimer) return;
+    m_autoMaskDebugFrameIndex = 0;
+    m_autoMaskDebugTimer->start();
+    update();
+}
+
+void StereoViewWidget::drawAutoMaskDebugOverlay(QPainter &painter, const QRect &viewport, float scale, bool isRight)
+{
+    if (m_autoMaskDebugFrameIndex < 0 || m_autoMaskDebugFrameIndex >= m_autoMaskDebugFrames.size()) return;
+    const AutoMaskDebugFrame &frame = m_autoMaskDebugFrames[m_autoMaskDebugFrameIndex];
+    QVector<QVector<QPointF>> polygons = frame.imagePolygons;
+    if (polygons.isEmpty() && !frame.imagePolygon.isEmpty()) polygons.append(frame.imagePolygon);
+    if (polygons.isEmpty() && !frame.imageRect.isEmpty()) {
+        const QRectF &r = frame.imageRect;
+        polygons.append({r.topLeft(), r.bottomLeft(), r.bottomRight(), r.topRight()});
+    }
+    painter.save();
+    painter.setClipRect(viewport);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPointF labelPoint;
+    bool hasLabel = false;
+    for (int pi = 0; pi < polygons.size(); ++pi) {
+        const QVector<QPointF> &poly = polygons[pi];
+        if (poly.size() < 3) continue;
+        float d = pi < frame.polygonDisparities.size() ? frame.polygonDisparities[pi] : frame.disparity;
+        QPainterPath path;
+        QPointF first = imageToWidget(poly.first(), viewport, scale, isRight ? d : 0);
+        path.moveTo(first);
+        if (!hasLabel) { labelPoint = first; hasLabel = true; }
+        for (int i = 1; i < poly.size(); ++i) path.lineTo(imageToWidget(poly[i], viewport, scale, isRight ? d : 0));
+        path.closeSubpath();
+        painter.fillPath(path, QColor(34, 197, 94, 42));
+        painter.setPen(QPen(QColor("#22c55e"), 2));
+        painter.drawPath(path);
+    }
+    if (hasLabel) {
+        QRectF labelRect(labelPoint + QPointF(8, 8), QSizeF(250, 24));
+        labelRect = labelRect.intersected(QRectF(viewport).adjusted(4, 4, -4, -4));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 180));
+        painter.drawRoundedRect(labelRect, 3, 3);
+        painter.setPen(Qt::white);
+        painter.drawText(labelRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                         tr("Auto Mask: %1/%2  %3").arg(m_autoMaskDebugFrameIndex + 1).arg(m_autoMaskDebugFrames.size()).arg(frame.label));
+    }
+    painter.restore();
+}
+
 void StereoViewWidget::addPoint(const QPointF &pos, float disparity, int index)
 {
     m_undoStack->push(new AddPointCommand(this, {pos, disparity}, index));
     updateAnaglyphIfActive();
     notifySelectionState();
+    notifyMaskState();
     if (m_autoSave) saveProject();
 }
 
@@ -421,17 +1009,18 @@ void StereoViewWidget::deleteSelectedPoints()
     m_selectedIndices.clear(); m_selectedPointIndex = -1;
     updateAnaglyphIfActive();
     notifySelectionState();
+    notifyMaskState();
     if (m_autoSave) saveProject();
 }
 
-void StereoViewWidget::updatePointInternal(int index, const MaskPoint &p) { if (index >= 0 && index < m_points.count()) { m_points[index] = p; updateAnaglyphIfActive(); update(); } }
-void StereoViewWidget::updatePointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) { if (indices[i] >= 0 && indices[i] < m_points.count()) m_points[indices[i]] = ps[i]; } updateAnaglyphIfActive(); update(); }
-void StereoViewWidget::addPointInternal(const MaskPoint &p, int index) { if (index >= 0 && index <= m_points.count()) m_points.insert(index, p); else m_points.append(p); updateAnaglyphIfActive(); update(); }
-void StereoViewWidget::removePointInternal(int index) { if (!m_points.isEmpty()) { if (index >= 0 && index < m_points.count()) m_points.removeAt(index); else m_points.removeLast(); } updateAnaglyphIfActive(); update(); }
-void StereoViewWidget::insertPointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) m_points.insert(indices[i], ps[i]); updateAnaglyphIfActive(); update(); }
-void StereoViewWidget::removePointsInternal(const QList<int> &indices) { for (int idx : indices) { if (idx >= 0 && idx < m_points.count()) m_points.removeAt(idx); } updateAnaglyphIfActive(); update(); }
+void StereoViewWidget::updatePointInternal(int index, const MaskPoint &p) { if (index >= 0 && index < m_points.count()) { m_points[index] = p; updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); } }
+void StereoViewWidget::updatePointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) { if (indices[i] >= 0 && indices[i] < m_points.count()) m_points[indices[i]] = ps[i]; } updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); }
+void StereoViewWidget::addPointInternal(const MaskPoint &p, int index) { if (index >= 0 && index <= m_points.count()) m_points.insert(index, p); else m_points.append(p); updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); }
+void StereoViewWidget::removePointInternal(int index) { if (!m_points.isEmpty()) { if (index >= 0 && index < m_points.count()) m_points.removeAt(index); else m_points.removeLast(); } updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); }
+void StereoViewWidget::insertPointsInternal(const QList<int> &indices, const QVector<MaskPoint> &ps) { for (int i = 0; i < indices.count(); ++i) m_points.insert(indices[i], ps[i]); updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); }
+void StereoViewWidget::removePointsInternal(const QList<int> &indices) { for (int idx : indices) { if (idx >= 0 && idx < m_points.count()) m_points.removeAt(idx); } updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); }
 
-void StereoViewWidget::clearPoints() { m_points.clear(); m_selectedIndices.clear(); m_undoStack->clear(); updateAnaglyphIfActive(); notifySelectionState(); update(); if (m_autoSave) saveProject(); }
+void StereoViewWidget::clearPoints() { m_points.clear(); m_selectedIndices.clear(); m_undoStack->clear(); updateAnaglyphIfActive(); notifySelectionState(); notifyMaskState(); update(); if (m_autoSave) saveProject(); }
 
 void StereoViewWidget::alignSelectedPoints(AlignSide side)
 {
@@ -671,7 +1260,8 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
 
                         maskPainter.translate(-localVisible.topLeft());
                         maskPainter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
-                        drawFeatheredPath(maskPainter, polyPath, Qt::black, m_featherAmount * scale);
+                        int previewFeather = m_previewFeatherEnabled ? qRound(m_featherAmount * scale) : 0;
+                        drawFeatheredPath(maskPainter, polyPath, Qt::black, previewFeather);
                         maskPainter.end();
 
                         painter.drawImage(visibleRect.topLeft(), maskImg);
@@ -720,10 +1310,25 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
         drawInViewport(vL, m_swapSides ? m_processor.rightImage() : m_processor.leftImage(), m_swapSides);
         drawInViewport(vR, m_swapSides ? m_processor.leftImage() : m_processor.rightImage(), !m_swapSides);
     }
+
+    drawAutoMaskDebugOverlay(painter, vL, scale, m_swapSides);
+    if (!m_anaglyphMode) drawAutoMaskDebugOverlay(painter, vR, scale, !m_swapSides);
     
     if (m_isSelecting && !m_selectionRect.isNull()) { 
         painter.setPen(QPen(Qt::white, 1, Qt::DashLine)); painter.setBrush(QColor(255, 255, 255, 50)); 
         painter.drawRect(m_selectionRect); 
+    }
+
+    if (m_isFreehandDrawing && m_freehandPoints.size() > 1) {
+        QPainterPath path;
+        QPointF first = imageToWidget(m_freehandPoints.first(), m_freehandViewport, m_freehandScale);
+        path.moveTo(first);
+        for (int i = 1; i < m_freehandPoints.size(); ++i) {
+            path.lineTo(imageToWidget(m_freehandPoints[i], m_freehandViewport, m_freehandScale));
+        }
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(Qt::cyan, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(path);
     }
 }
 
@@ -735,6 +1340,18 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
 
     if (m_panMode || event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier))) {
         m_isPanning = true; setCursor(Qt::SizeAllCursor); return;
+    }
+
+    if (m_freehandMode && event->button() == Qt::LeftButton && m_points.isEmpty()) {
+        QRect targetV = vL.contains(event->pos()) ? vL : (vR.contains(event->pos()) && !m_anaglyphMode ? vR : QRect());
+        if (!targetV.isNull()) {
+            m_freehandViewport = targetV;
+            m_freehandScale = scale;
+            m_freehandPoints.clear();
+            m_isFreehandDrawing = true;
+            appendFreehandPoint(event->pos());
+            return;
+        }
     }
 
     int hitIdx = -1;
@@ -833,6 +1450,13 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
 
 void StereoViewWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_isFreehandDrawing) {
+        if (event->buttons() & Qt::LeftButton) {
+            appendFreehandPoint(event->pos());
+        }
+        return;
+    }
+
     if (m_isPanning) {
         QPoint delta = event->pos() - m_lastMousePos;
         float scale; QRect vL, vR; calculateLayout(vL, vR, scale);
@@ -934,6 +1558,14 @@ void StereoViewWidget::mouseMoveEvent(QMouseEvent *event)
 
 void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_isFreehandDrawing) {
+        if (event->button() == Qt::LeftButton) {
+            appendFreehandPoint(event->pos());
+            finishFreehandDrawing();
+        }
+        return;
+    }
+
     if (m_isPanning) { m_isPanning = false; setCursor(m_panMode ? Qt::OpenHandCursor : Qt::ArrowCursor); return; }
     if (m_isSelecting) {
         float scale; QRect vL, vR; calculateLayout(vL, vR, scale);

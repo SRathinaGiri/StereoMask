@@ -1,8 +1,17 @@
-# StereoMask v1.3.0
+# StereoMask v2.0.0
 
 A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
 
 ![StereoMask screenshot](Screenshot.jpg)
+
+## New in v2.0.0
+
+- **OpenCV AutoMask:** Native MinGW/OpenCV stereo matching creates editable mask points from SBS image overlap.
+- **Depth-Aware Auto Points:** Auto-generated points carry per-point disparity so the right-eye mask follows depth offsets.
+- **Freehand Mask Drawing:** Draw masks directly with a simplified editable polygon output.
+- **Freehand Cleanup:** Freehand strokes are smoothed, simplified, and capped to a practical point count.
+- **Undoable Mask Creation:** AutoMask and Freehand mask creation integrate with the existing undo stack.
+- **Bundled OpenCV Runtime:** Release builds copy required vcpkg/OpenCV DLLs beside the application.
 
 ## New in v1.3.0
 
@@ -24,6 +33,8 @@ A precision masking tool for side-by-side (SBS) stereo images, developed with **
 
 - **Grouped Toolbar:** Intuitive controls for file operations, editing, masking, and transforms.
 - **Precision Masking:** Add, move, and multi-select points to define custom masks for 3D images.
+- **OpenCV AutoMask:** Generate editable mask polygons from stereo disparity using native C++ OpenCV.
+- **Freehand Masking:** Draw an initial mask shape by hand, then refine the generated control points.
 - **Masked Anaglyph Preview:** Real-time 3D preview of your mask using Red/Cyan channels, supporting both parallel and cross-eye sources.
 - **Project Persistence (.msk):** Save your work as mask projects that store point data and project-specific settings.
 - **Interleaving Space:** Configure gaps between eye images in exported masks, filled with customizable background colors.
@@ -44,11 +55,15 @@ This project is licensed under the [MIT License](LICENSE).
 - Qt 6.x
 - CMake 3.16+
 - C++17 Compatible Compiler
+- OpenCV 4 built for MinGW via vcpkg (`opencv4:x64-mingw-dynamic`)
 
 ## Building
 
 ```powershell
 $env:PATH = "D:\Qt\6.11.0\mingw_64\bin;D:\Qt\Tools\mingw1310_64\bin;" + $env:PATH
-cmake -B build -S . -G "MinGW Makefiles"
+cmake -B build -S . -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+The project expects the vcpkg OpenCV install at `D:\vcpkg\installed\x64-mingw-dynamic`.
+The build copies the required OpenCV runtime DLLs into `build\` beside `StereoMask.exe`.

@@ -10,6 +10,8 @@
 
 #include <QUndoStack>
 
+class QTimer;
+
 class StereoViewWidget : public QWidget
 {
     Q_OBJECT
@@ -31,6 +33,7 @@ public:
     void setLockVertical(bool locked) { m_lockVertical = locked; }
     void setSnapEnabled(bool enabled) { m_snapEnabled = enabled; }
     void setPanMode(bool enabled) { m_panMode = enabled; }
+    void setFreehandMode(bool enabled);
     float zoom() const { return m_zoom; }
 
     void addPoint(const QPointF &pos, float disparity = 0, int index = -1);
@@ -39,6 +42,7 @@ public:
     void setSelectedPointDisparity(int disparity);
     void transformSelectedPoints(float scaleX, float scaleY, float dx, float dy);
     void toggleCurve();
+    bool createAutoMaskPoints();
 
     void setMaskSettings(const QColor &color, float opacity, int feather = 0) { 
         m_maskColor = color; m_maskOpacity = opacity; m_featherAmount = feather; 
@@ -47,6 +51,7 @@ public:
     void setMaskColor(const QColor &color) { m_maskColor = color; updateAnaglyphIfActive(); update(); }
     void setMaskOpacity(float opacity) { m_maskOpacity = opacity; updateAnaglyphIfActive(); update(); }
     void setMaskFeather(int amount) { m_featherAmount = amount; updateAnaglyphIfActive(); update(); }
+    void setPreviewFeatherEnabled(bool enabled) { m_previewFeatherEnabled = enabled; update(); }
     void setPaddingSettings(int px, int py, const QColor &bg, int interleaving) { m_padx = px; m_pady = py; m_bgColor = bg; m_interleavingSpace = interleaving; }
 
     void updateAnaglyphIfActive();
@@ -56,10 +61,13 @@ public:
     int padx() const { return m_padx; }
     int pady() const { return m_pady; }
     int featherAmount() const { return m_featherAmount; }
+    bool previewFeatherEnabled() const { return m_previewFeatherEnabled; }
     bool snapEnabled() const { return m_snapEnabled; }
     QColor bgColor() const { return m_bgColor; }
     int interleavingSpace() const { return m_interleavingSpace; }
     bool hasCurveSelection() const;
+    bool canFreehandDraw() const { return m_points.isEmpty(); }
+    bool canAutoMask() const { return m_processor.isValid() && m_points.isEmpty(); }
     QImage leftImage() const { return m_processor.leftImage(); }
     QImage rightImage() const { return m_processor.rightImage(); }
     QVector<MaskPoint> points() const { return m_points; }
@@ -80,6 +88,8 @@ public:
 signals:
     void selectionChanged(int currentDisparity);
     void curveSelectionChanged(bool hasCurveSelection);
+    void maskEmptyChanged(bool isEmpty);
+    void freehandModeChanged(bool enabled);
 
 public:
     // Internal methods for Undo Commands
@@ -100,12 +110,33 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
 
 private:
+    struct AutoMaskDebugFrame {
+        QRectF imageRect;
+        QVector<QPointF> imagePolygon;
+        QVector<QVector<QPointF>> imagePolygons;
+        QVector<float> polygonDisparities;
+        float disparity = 0.0f;
+        QString label;
+    };
+
     QPainterPath createMaskPath(const QVector<MaskPoint> &pts, const QRectF &v, float scale, bool isRight, bool includeRect = true, bool ignorePan = false);
     void drawFeatheredPath(QPainter &painter, const QPainterPath &path, const QColor &color, int feather);
+    void drawAutoMaskDebugOverlay(QPainter &painter, const QRect &viewport, float scale, bool isRight);
+    void startAutoMaskDebugPlayback();
     QPointF widgetToImage(const QPoint &pos, const QRect &targetRect, float scale);
     QPointF imageToWidget(const QPointF &pos, const QRect &targetRect, float scale, float disparity = 0);
     void calculateLayout(QRect &rL, QRect &rR, float &scale);
     void notifySelectionState();
+    void notifyMaskState();
+    void appendFreehandPoint(const QPoint &widgetPos);
+    void finishFreehandDrawing();
+    QVector<QPointF> simplifyFreehandPath(const QVector<QPointF> &points, double tolerance) const;
+    QVector<QPointF> snapFreehandPathToEdges(const QVector<QPointF> &points) const;
+    QVector<QPointF> smoothFreehandPath(const QVector<QPointF> &points) const;
+    QVector<QPointF> limitFreehandPointCount(const QVector<QPointF> &points, int maxPoints) const;
+    int estimateGlobalDisparity() const;
+    int edgeStrengthAt(const QImage &image, int x, int y) const;
+    double pointLineDistance(const QPointF &point, const QPointF &lineStart, const QPointF &lineEnd) const;
 
     enum ControlPointType { HitNone, HitPoint, HitCP1, HitCP2 };
     ControlPointType m_hitType = HitNone;
@@ -120,6 +151,14 @@ private:
     int m_selectedPointIndex = -1;
     QPoint m_lastMousePos;
     QPoint m_mouseDragStart;
+    QRect m_freehandViewport;
+    float m_freehandScale = 1.0f;
+    QVector<QPointF> m_freehandPoints;
+    QVector<AutoMaskDebugFrame> m_autoMaskDebugFrames;
+    QVector<MaskPoint> m_pendingAutoMaskPoints;
+    QString m_pendingAutoMaskText;
+    QTimer *m_autoMaskDebugTimer = nullptr;
+    int m_autoMaskDebugFrameIndex = -1;
     float m_zoom = 1.0f;
     QPointF m_panOffset; // Panning offset in image coordinates
     QUndoStack *m_undoStack;
@@ -131,12 +170,15 @@ private:
     bool m_isSelecting = false;
     bool m_isPanning = false;
     bool m_panMode = false;
+    bool m_freehandMode = false;
+    bool m_isFreehandDrawing = false;
     QString m_imagePath;
     QString m_lastError;
 
     QColor m_maskColor = Qt::black;
     float m_maskOpacity = 0.6f;
     int m_featherAmount = 0;
+    bool m_previewFeatherEnabled = false;
     int m_padx = 0;
     int m_pady = 0;
     QColor m_bgColor = Qt::white;

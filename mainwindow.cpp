@@ -25,6 +25,7 @@
 #include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <QSignalBlocker>
 #include <QtMath>
 #include <cmath>
@@ -139,7 +140,7 @@ public:
         icon->setAlignment(Qt::AlignCenter);
         fLayout->addWidget(icon);
 
-        QLabel *text = new QLabel(tr("<h1>StereoMask v1.3.0</h1>"
+        QLabel *text = new QLabel(tr("<h1>StereoMask v2.0.0</h1>"
                                      "<p align='center'><b>Author:</b> S. Rathinagiri</p>"
                                      "<p align='center'>Developed using <b>GEMINI CLI</b> and Qt6.</p>"), frame);
         text->setAlignment(Qt::AlignCenter);
@@ -402,6 +403,31 @@ static QIcon customIcon(const QString &name)
     } else if (name == "curve") {
         p.setPen(QPen(blue, 5, Qt::SolidLine, Qt::RoundCap)); QPainterPath path; path.moveTo(16, 43); path.cubicTo(20, 12, 45, 52, 49, 20); p.drawPath(path);
         point({16, 43}, blue); point({49, 20}, blue);
+    } else if (name == "freehand") {
+        p.setPen(QPen(cyan, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        QPainterPath path;
+        path.moveTo(15, 40);
+        path.cubicTo(20, 18, 29, 50, 36, 28);
+        path.cubicTo(42, 10, 48, 30, 50, 18);
+        p.drawPath(path);
+        p.setPen(QPen(green, 3));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolygon(QPolygonF({{17, 42}, {28, 35}, {39, 30}, {48, 20}}));
+    } else if (name == "autoMask") {
+        p.setPen(QPen(blue, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(QColor("#dbeafe"));
+        p.drawPolygon(QPolygonF({{18, 18}, {48, 18}, {43, 46}, {14, 42}}));
+        p.setPen(QPen(green, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawLine(22, 28, 40, 28);
+        p.drawLine(40, 28, 34, 22);
+        p.drawLine(40, 28, 34, 34);
+    } else if (name == "featherPreview") {
+        p.setPen(QPen(cyan, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QRectF(18, 18, 28, 28));
+        p.setPen(QPen(cyan.lighter(150), 2, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawEllipse(QRectF(12, 12, 40, 40));
+        p.drawEllipse(QRectF(7, 7, 50, 50));
     } else {
         label("?", ink, 18);
     }
@@ -479,7 +505,7 @@ void MainWindow::createToolbar()
 
     addToolBarBreak(Qt::TopToolBarArea);
 
-    QToolBar *editMaskBar = addToolBar(tr("Edit, Mask and Transform"));
+    QToolBar *editMaskBar = addToolBar(tr("Edit and Align"));
     configureToolbar(editMaskBar);
 
     addToolGroupLabel(editMaskBar, tr("Edit"));
@@ -493,7 +519,8 @@ void MainWindow::createToolbar()
     redo->setToolTip(tr("Redo"));
     editMaskBar->addAction(redo);
 
-    QAction *deleteSelected = addToolAction(editMaskBar, customIcon("delete"), tr("Delete"), tr("Delete Selected"));
+    QAction *deleteSelected = addToolAction(editMaskBar, customIcon("delete"), tr("Delete"), tr("Delete Selected (Del)"));
+    deleteSelected->setShortcut(QKeySequence::Delete);
     connect(deleteSelected, &QAction::triggered, m_viewWidget, &StereoViewWidget::deleteSelectedPoints);
 
     QAction *clear = addToolAction(editMaskBar, customIcon("clear"), tr("Clear"), tr("Clear All Points"));
@@ -511,28 +538,32 @@ void MainWindow::createToolbar()
     connect(alignBottom, &QAction::triggered, this, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignBottom); });
     QAction *alignDepth = addToolAction(editMaskBar, customIcon("alignDepth"), tr("Depth"), tr("Align Depth"));
     connect(alignDepth, &QAction::triggered, this, [this](){ m_viewWidget->alignSelectedPoints(StereoViewWidget::AlignDepth); });
-    editMaskBar->addSeparator();
 
-    addToolGroupLabel(editMaskBar, tr("Scale"));
-    QAction *scaleUp = addToolAction(editMaskBar, customIcon("scaleUp"), tr("Up"), tr("Scale Up"));
+    addToolBarBreak(Qt::TopToolBarArea);
+
+    QToolBar *transformBar = addToolBar(tr("Transform"));
+    configureToolbar(transformBar);
+
+    addToolGroupLabel(transformBar, tr("Scale"));
+    QAction *scaleUp = addToolAction(transformBar, customIcon("scaleUp"), tr("Up"), tr("Scale Up"));
     connect(scaleUp, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(1.1f, 1.1f, 0, 0); });
-    QAction *scaleDown = addToolAction(editMaskBar, customIcon("scaleDown"), tr("Down"), tr("Scale Down"));
+    QAction *scaleDown = addToolAction(transformBar, customIcon("scaleDown"), tr("Down"), tr("Scale Down"));
     connect(scaleDown, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(0.9f, 0.9f, 0, 0); });
-    editMaskBar->addSeparator();
+    transformBar->addSeparator();
 
-    addToolGroupLabel(editMaskBar, tr("Move"));
-    QAction *shiftLeft = addToolAction(editMaskBar, customIcon("shiftLeft"), tr("Left"), tr("Shift Left"));
+    addToolGroupLabel(transformBar, tr("Move"));
+    QAction *shiftLeft = addToolAction(transformBar, customIcon("shiftLeft"), tr("Left"), tr("Shift Left"));
     connect(shiftLeft, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, -10, 0); });
-    QAction *shiftRight = addToolAction(editMaskBar, customIcon("shiftRight"), tr("Right"), tr("Shift Right"));
+    QAction *shiftRight = addToolAction(transformBar, customIcon("shiftRight"), tr("Right"), tr("Shift Right"));
     connect(shiftRight, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 10, 0); });
-    QAction *shiftUp = addToolAction(editMaskBar, customIcon("shiftUp"), tr("Up"), tr("Shift Up"));
+    QAction *shiftUp = addToolAction(transformBar, customIcon("shiftUp"), tr("Up"), tr("Shift Up"));
     connect(shiftUp, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 0, -10); });
-    QAction *shiftDown = addToolAction(editMaskBar, customIcon("shiftDown"), tr("Down"), tr("Shift Down"));
+    QAction *shiftDown = addToolAction(transformBar, customIcon("shiftDown"), tr("Down"), tr("Shift Down"));
     connect(shiftDown, &QAction::triggered, this, [this](){ m_viewWidget->transformSelectedPoints(1.0f, 1.0f, 0, 10); });
-    editMaskBar->addSeparator();
+    transformBar->addSeparator();
 
-    addToolGroupLabel(editMaskBar, tr("Curve / Rotate"));
-    QAction *curve = addToolAction(editMaskBar, customIcon("curve"), tr("Curve"), tr("Toggle Curve (C)"));
+    addToolGroupLabel(transformBar, tr("Curve / Rotate"));
+    QAction *curve = addToolAction(transformBar, customIcon("curve"), tr("Curve"), tr("Toggle Curve (C)"));
     curve->setCheckable(true);
     connect(curve, &QAction::triggered, this, &MainWindow::toggleCurve);
     connect(m_viewWidget, &StereoViewWidget::curveSelectionChanged, curve, [curve](bool hasCurveSelection){
@@ -542,7 +573,7 @@ void MainWindow::createToolbar()
 
     m_rotationActions.clear();
     auto addRotBtn = [&](const QString &text, StereoViewWidget::RotationAxis axis, const QString &tip) {
-        QAction *a = addToolAction(editMaskBar, customIcon(axis == StereoViewWidget::AxisX ? "rotX" : axis == StereoViewWidget::AxisY ? "rotY" : "rotZ"), text, tip);
+        QAction *a = addToolAction(transformBar, customIcon(axis == StereoViewWidget::AxisX ? "rotX" : axis == StereoViewWidget::AxisY ? "rotY" : "rotZ"), text, tip);
         a->setCheckable(true);
         a->setEnabled(false);
         m_rotationActions.append(a);
@@ -564,7 +595,6 @@ void MainWindow::createToolbar()
     addRotBtn("Rx", StereoViewWidget::AxisX, tr("Rotate Mode X (Tilt Up/Down)"));
     addRotBtn("Ry", StereoViewWidget::AxisY, tr("Rotate Mode Y (Tilt Left/Right)"));
     addRotBtn("Rz", StereoViewWidget::AxisZ, tr("Rotate Mode Z (Roll)"));
-    editMaskBar->addSeparator();
 
     connect(m_viewWidget, &StereoViewWidget::curveSelectionChanged, this, [this](bool hasCurveSelection){
         if (!hasCurveSelection) {
@@ -581,12 +611,52 @@ void MainWindow::createToolbar()
         }
     });
 
-    addToolGroupLabel(editMaskBar, tr("Mask"));
-    QAction *color = addToolAction(editMaskBar, customIcon("color"), tr("Color"), tr("Quick Mask Color"));
+    addToolBarBreak(Qt::TopToolBarArea);
+
+    QToolBar *maskBar = addToolBar(tr("Mask"));
+    configureToolbar(maskBar);
+
+    addToolGroupLabel(maskBar, tr("Mask"));
+    QAction *autoMask = addToolAction(maskBar, customIcon("autoMask"), tr("Auto"), tr("Create editable mask points from stereo overlap"));
+    autoMask->setEnabled(m_viewWidget->canAutoMask());
+    connect(autoMask, &QAction::triggered, this, [this](){
+        if (m_viewWidget->createAutoMaskPoints()) {
+            statusBar()->showMessage(tr("Auto mask points created"), 3000);
+        } else {
+            statusBar()->showMessage(tr("Auto mask is available only when no mask points exist"), 3000);
+        }
+    });
+    connect(m_viewWidget, &StereoViewWidget::maskEmptyChanged, autoMask, [this, autoMask](bool isEmpty){
+        autoMask->setEnabled(m_viewWidget->isImageLoaded() && isEmpty);
+    });
+
+    QAction *freehand = addToolAction(maskBar, customIcon("freehand"), tr("Freehand"), tr("Draw a freehand mask when no mask points exist"));
+    freehand->setCheckable(true);
+    freehand->setEnabled(m_viewWidget->isImageLoaded() && m_viewWidget->canFreehandDraw());
+    connect(freehand, &QAction::toggled, m_viewWidget, &StereoViewWidget::setFreehandMode);
+    connect(m_viewWidget, &StereoViewWidget::freehandModeChanged, freehand, [freehand](bool enabled){
+        QSignalBlocker blocker(freehand);
+        freehand->setChecked(enabled);
+    });
+    connect(m_viewWidget, &StereoViewWidget::maskEmptyChanged, freehand, [this, freehand](bool isEmpty){
+        bool enabled = m_viewWidget->isImageLoaded() && isEmpty;
+        freehand->setEnabled(enabled);
+        if (!enabled) {
+            QSignalBlocker blocker(freehand);
+            freehand->setChecked(false);
+        }
+    });
+
+    QAction *color = addToolAction(maskBar, customIcon("color"), tr("Color"), tr("Quick Mask Color"));
     connect(color, &QAction::triggered, this, [this](){
         QColor c = QColorDialog::getColor(m_viewWidget->maskColor(), this, tr("Select Mask Color"));
         if (c.isValid()) m_viewWidget->setMaskColor(c);
     });
+
+    QAction *previewFeather = addToolAction(maskBar, customIcon("featherPreview"), tr("Preview Feather"), tr("Enable feathering in preview"));
+    previewFeather->setCheckable(true);
+    previewFeather->setChecked(m_viewWidget->previewFeatherEnabled());
+    connect(previewFeather, &QAction::toggled, m_viewWidget, &StereoViewWidget::setPreviewFeatherEnabled);
 
     m_opacitySpin = new QSpinBox;
     m_opacitySpin->setRange(0, 100);
@@ -596,7 +666,7 @@ void MainWindow::createToolbar()
     connect(m_opacitySpin, &QSpinBox::valueChanged, this, [this](int v){
         m_viewWidget->setMaskOpacity(v / 100.0f);
     });
-    editMaskBar->addWidget(m_opacitySpin);
+    maskBar->addWidget(m_opacitySpin);
 
 }
 
@@ -727,7 +797,7 @@ void MainWindow::showHelp()
 void MainWindow::showAbout()
 {
     QMessageBox::about(this, tr("About StereoMask"),
-        tr("<h2>StereoMask v1.3.0</h2>"
+        tr("<h2>StereoMask v2.0.0</h2>"
            "<p>A precision masking tool for side-by-side stereo images.</p>"
            "<p><b>Author:</b> S. Rathinagiri</p>"
            "<p>Developed using <b>GEMINI CLI</b> and Qt6.</p>"
