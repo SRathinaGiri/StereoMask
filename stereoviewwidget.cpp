@@ -12,6 +12,7 @@
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QPainterPath>
+#include <QPainterPathStroker>
 #include <QDebug>
 #include <QWheelEvent>
 #include <QFile>
@@ -581,6 +582,8 @@ class SelectionObjectsCommand : public QUndoCommand {
 public:
     SelectionObjectsCommand(StereoViewWidget *v, const SelectionState &next, const QString &text)
         : QUndoCommand(text), view(v), before(v->selectionState()), after(next) {}
+    SelectionObjectsCommand(StereoViewWidget *v, const SelectionState &previous, const SelectionState &next, const QString &text)
+        : QUndoCommand(text), view(v), before(previous), after(next) {}
     void undo() override { view->restoreSelectionState(before); }
     void redo() override { view->restoreSelectionState(after); }
 };
@@ -686,6 +689,7 @@ void StereoViewWidget::rebuildSelectionMasks() {
 }
 
 void StereoViewWidget::restoreSelectionState(const SelectionState &state) {
+    m_draggingPolygon=false;
     cancelLasso();
     m_selectionObjects=state.objects;
     m_baseRevealLeft=state.baseLeft; m_baseRevealRight=state.baseRight;
@@ -746,6 +750,18 @@ void StereoViewWidget::deleteSelection(const QString &id) {
         state.objects.removeAt(i);
         m_undoStack->push(new SelectionObjectsCommand(this,state,tr("Delete selection"))); return;
     }
+}
+void StereoViewWidget::setPolygonMoveEnabled(bool enabled) {
+    if (enabled && (hasLasso() || m_refining)) {
+        emit smartStatus(tr("Apply or cancel the current outline before moving an applied polygon."));
+        emit polygonMoveModeChanged(m_polygonMoveEnabled);return;
+    }
+    if (enabled==m_polygonMoveEnabled) return;
+    if (m_draggingPolygon) restoreSelectionState(m_beforePolygonDrag);
+    m_polygonMoveEnabled=enabled;
+    if (enabled) {m_panMode=false;m_freehandMode=false;m_pickingColor=false;}
+    setCursor(enabled ? Qt::SizeAllCursor : m_brushMode>=7 ? Qt::CrossCursor : Qt::ArrowCursor);
+    emit polygonMoveModeChanged(enabled);setFocus();update();
 }
 void StereoViewWidget::toggleSelectionOperation(const QString &id) {
     if (m_refining) return;
@@ -1273,7 +1289,7 @@ void StereoViewWidget::updateAnaglyphIfActive()
     }
 }
 
-void StereoViewWidget::setZoom(float zoom) { m_zoom = qBound(0.1f, zoom, 20.0f); update(); }
+void StereoViewWidget::setZoom(float zoom) { if (m_draggingPolygon) return; m_zoom = qBound(0.1f, zoom, 20.0f); update(); }
 
 bool StereoViewWidget::hasCurveSelection() const
 {
@@ -2136,6 +2152,24 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
         emit maskColorPicked(color); update(); return;
     }
     if (m_pickingColor) return;
+    if (m_polygonMoveEnabled && event->button()==Qt::LeftButton && !m_anaglyphMode) {
+        if (hasLasso()) {emit smartStatus(tr("Apply or cancel the current outline first."));return;}
+        QRect left,right;float scale;calculateLayout(left,right,scale);
+        if (!left.contains(event->pos()) && !right.contains(event->pos())) return;
+        const bool eye=right.contains(event->pos()) ? !m_swapSides : m_swapSides;
+        const QRect viewport=eye!=m_swapSides ? right : left;
+        const QPointF point=widgetToImage(event->pos(),viewport,scale);
+        for (const auto &object:m_selectionObjects) if (object.id==m_activeSelectionId) {
+            if (object.right!=eye || !object.visible || object.anchors.size()<3 || !object.raster.isNull()) return;
+            QPainterPathStroker stroke;stroke.setWidth(14.0/scale);
+            if (!object.path.contains(point) && !stroke.createStroke(object.path).contains(point)) return;
+            m_beforePolygonDrag=selectionState();m_draggedPolygonId=object.id;
+            m_polygonDragStart=point;m_polygonDragDelta=QPointF();
+            m_polygonDragViewport=viewport;m_polygonDragScale=scale;m_draggingPolygon=true;
+            setCursor(Qt::ClosedHandCursor);return;
+        }
+        emit smartStatus(tr("Select a visible polygon in Selections, then drag its interior or edge."));return;
+    }
     if (m_brushMode >= 7 && !m_anaglyphMode) {
         if (event->button() != Qt::LeftButton) return;
         QRect l,r; float scale; calculateLayout(l,r,scale);
@@ -2343,6 +2377,26 @@ void StereoViewWidget::mouseMoveEvent(QMouseEvent *event)
 {
     m_brushCursor = event->pos(); m_cursorVisible = true;
     if (m_refining) return;
+    if (m_draggingPolygon && ((event->buttons() & Qt::LeftButton) || event->type()==QEvent::MouseButtonRelease)) {
+        QPointF delta=widgetToImage(event->pos(),m_polygonDragViewport,m_polygonDragScale)-m_polygonDragStart;
+        if (event->modifiers() & Qt::ShiftModifier) delta.setY(0);
+        for (const auto &original:m_beforePolygonDrag.objects) if (original.id==m_draggedPolygonId) {
+            const QRectF bounds=original.path.boundingRect();
+            const QImage image=original.right ? m_processor.rightImage() : m_processor.leftImage();
+            const double minX=-bounds.left(),maxX=image.width()-1-bounds.right();
+            const double minY=-bounds.top(),maxY=image.height()-1-bounds.bottom();
+            delta.setX(minX<=maxX ? qBound(minX,delta.x(),maxX) : 0);
+            delta.setY(minY<=maxY ? qBound(minY,delta.y(),maxY) : 0);
+            for (auto &object:m_selectionObjects) if (object.id==m_draggedPolygonId) {
+                object=original;object.path=QTransform::fromTranslate(delta.x(),delta.y()).map(original.path);
+                for (auto &point:object.anchors) point+=delta;
+                break;
+            }
+            m_polygonDragDelta=delta;++m_smartRevision;rebuildSelectionMasks();update();return;
+        }
+        return;
+    }
+    if (m_polygonMoveEnabled && !m_isPanning) {setCursor(Qt::SizeAllCursor);update();return;}
     if (m_isPanning) {
         QRect l,r; float scale; calculateLayout(l,r,scale);
         const QPoint delta=event->pos()-m_lastMousePos;
@@ -2486,6 +2540,15 @@ void StereoViewWidget::mouseMoveEvent(QMouseEvent *event)
 
 void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_draggingPolygon && event->button()==Qt::LeftButton) {
+        mouseMoveEvent(event);
+        const auto before=m_beforePolygonDrag,after=selectionState();
+        m_draggingPolygon=false;setCursor(Qt::SizeAllCursor);
+        if (!m_polygonDragDelta.isNull())
+            m_undoStack->push(new SelectionObjectsCommand(this,before,after,tr("Move polygon")));
+        m_beforePolygonDrag=SelectionState{};
+        update();return;
+    }
     if (m_isPanning) {
         m_isPanning=false;
         setCursor(m_spacePan || m_panMode ? Qt::OpenHandCursor : m_brushMode >= 7 ? Qt::CrossCursor : m_brushMode ? Qt::BlankCursor : Qt::ArrowCursor);
@@ -2553,6 +2616,7 @@ void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
 
 void StereoViewWidget::wheelEvent(QWheelEvent *event) 
 { 
+    if (m_draggingPolygon) {event->accept();return;}
     QRect vL, vR; float oldScale; calculateLayout(vL, vR, oldScale);
     QPoint pos = event->position().toPoint();
     QRect targetV = vL.contains(pos) ? vL : (vR.contains(pos) ? vR : QRect());
@@ -2620,6 +2684,9 @@ void StereoViewWidget::leaveEvent(QEvent *event) {
     m_cursorVisible = false; update(); QWidget::leaveEvent(event);
 }
 void StereoViewWidget::keyPressEvent(QKeyEvent *event) {
+    if (m_draggingPolygon && event->key()==Qt::Key_Escape) {
+        restoreSelectionState(m_beforePolygonDrag);m_beforePolygonDrag=SelectionState{};setCursor(Qt::SizeAllCursor);event->accept();return;
+    }
     if (m_processor.isValid() && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
         QPointF direction;
         switch (event->key()) {
@@ -2630,7 +2697,7 @@ void StereoViewWidget::keyPressEvent(QKeyEvent *event) {
         default: break;
         }
         if (!direction.isNull()) {
-            if (!m_brushing && !m_isFreehandDrawing && m_lassoDrag<0 && !m_isPanning) {
+            if (!m_brushing && !m_isFreehandDrawing && m_lassoDrag<0 && !m_isPanning && !m_draggingPolygon) {
                 QRect left,right; float scale; calculateLayout(left,right,scale);
                 const double step=event->modifiers() & Qt::ShiftModifier ? 144.0 : 48.0;
                 if (scale>0) m_panOffset+=direction*(step/scale);

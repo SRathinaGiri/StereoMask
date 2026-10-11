@@ -1,10 +1,10 @@
-# StereoMask v2.1.0
+# StereoMask v2.1.1
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-Download the packaged Windows build from the [v2.1.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.1.1 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.1); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
 
@@ -16,6 +16,7 @@ Download the packaged Windows build from the [v2.1.0 release](https://github.com
 - **Selection objects:** Stable identities, names, physical eye, operation, visibility, anchors and list order in project JSON. The Selections dock supports Edit points, rename, eye-icon visibility, delete, Move Up/Down and Switch Add/Subtract. Brush strokes are raster objects; old flattened masks import as groups.
 - **Ordered holes:** The frame opening is the starting area; visible objects apply top to bottom. Add reveals pixels; Subtract covers them, even inside the frame. A later Add can reopen an earlier subtraction.
 - **Anchor insertion/removal:** Shift-click an edge to insert, including closing/magnetic edges. Ctrl-click a point to remove it and reconnect neighbors. Closed polygons retain at least three points. Apply commits changes; Undo restores the previous polygon.
+- **Whole-polygon movement (new in v2.1.1):** Select a visible polygon in the Selections panel and enable Move polygon (four-arrow icon). Drag its interior or edge to translate its shape and all anchors together. Shift-drag moves horizontally only; Escape cancels the drag. Each completed drag is undoable and does not move the former paired partner. The shape stays within its eye image; raster/imported groups are not moved by this polygon tool.
 - **Paired lasso:** The connected-circles toggle creates an estimated opposite-eye polygon on new Apply. Source-resolution OpenCV patch matching and disparity fallback assist alignment. Two independent objects remain afterward; inspect and adjust the copied outline.
 - **Aligned navigation:** Shared zoom/pan, pointer-centered wheel zoom, arrows to scroll, Shift+Arrow for larger steps, Space/Alt/middle-button drag to pan, Ctrl+0 fit and Ctrl+Plus/Minus zoom. Unfinished lassos are retained.
 - **Export-consistent preview:** Preview Mask uses the same per-eye compositing as the selected export mode. Match preview uses mask color/opacity; solid cutouts use their chosen background. Transparent SBS preview uses a non-exported checkerboard. Composed eye images are cached.

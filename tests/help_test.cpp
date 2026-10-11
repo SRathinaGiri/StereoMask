@@ -176,8 +176,12 @@ int main(int argc, char **argv) {
     }
     if (!edited) return 13;
     view->cancelLasso();
+    auto movePolygon=window.findChild<QAction *>("movePolygonAction");
+    if (!movePolygon || !movePolygon->isEnabled() || !movePolygon->isCheckable() || movePolygon->icon().isNull()) return 27;
+    movePolygon->trigger();if (!view->polygonMoveEnabled()) return 28;
+    movePolygon->trigger();if (view->polygonMoveEnabled()) return 28;
     QApplication::processEvents();
-    if (!window.grab().save("windows-v2.1.0-ui.png")) return 6;
+    if (!window.grab().save("windows-v2.1.1-ui.png")) return 6;
     QDesktopServices::unsetUrlHandler("file");
     std::cout << "Help menu opens exact embedded guide through file URL; new brush names verified.\n";
     return 0;

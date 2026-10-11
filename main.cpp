@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
     qDebug() << "------------------------------";
 
     MainWindow w;
-    w.setWindowTitle("StereoMask v2.1.0");
+    w.setWindowTitle("StereoMask v2.1.1");
     w.show();
     return a.exec();
 }

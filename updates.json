@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0",
+  "version": "2.1.1",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.1",
   "package_type": "app",
-  "notes": "Windows v2.1.0: independent ordered selection objects with editable anchors and frame holes; smart and paired lassos; insert/remove points and quick apply; aligned keyboard scrolling; clean and export-consistent preview; Match preview export with mask opacity; synchronized mask colors; selectable OpenCV AutoMask and freehand framing. Includes updated offline help and a Mac R10 porting checklist."
+  "notes": "Windows v2.1.1 adds whole-polygon drag movement from the Selections toolbar. Move all anchors and the saved outline together, including smart and paired polygons. Shift-drag moves horizontally; Escape cancels; one drag is one undo step. Movement stays inside the eye image and leaves the paired partner independent. Includes updated help and the 27-item Mac porting checklist."
 }

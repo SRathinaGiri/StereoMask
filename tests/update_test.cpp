@@ -1,4 +1,6 @@
 #include "updatechecker.h"
+#include "appversion.h"
+#include <QVersionNumber>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QJsonDocument>
@@ -59,8 +61,10 @@ int main(int argc,char **argv) {
     require(!UpdateChecker::parse(notice("2.0.11","https://github.com/SRathinaGiri/StereoMask-evil"),info,error),"Wrong repository accepted");
     require(!UpdateChecker::parse(notice("2.0.11","http://github.com/SRathinaGiri/StereoMask"),info,error),"Insecure URL accepted");
     require(!UpdateChecker::parse(notice("nonsense"),info,error),"Invalid manifest version accepted");
-    httpCheck(notice("2.1.1"),200,true,false);
-    httpCheck(notice("2.1.0"),200,false,false);
+    const QString installed=QString::fromLatin1(STEREOMASK_VERSION);
+    auto next=QVersionNumber::fromString(installed).segments();++next[2];
+    httpCheck(notice(QVersionNumber(next).toString()),200,true,false);
+    httpCheck(notice(installed),200,false,false);
     httpCheck(notice("2.0.9"),200,false,false);
     httpCheck("not JSON",200,false,true);
     httpCheck("{}",404,false,true);

@@ -152,7 +152,7 @@ public:
         icon->setAlignment(Qt::AlignCenter);
         fLayout->addWidget(icon);
 
-        QLabel *text = new QLabel(tr("<h1>StereoMask v2.1.0</h1>"
+        QLabel *text = new QLabel(tr("<h1>StereoMask v2.1.1</h1>"
                                      "<p align='center'><b>Stereomasken creator:</b> Bernd Paksa</p>"
                                      "<p align='center'><b>StereoMask Windows:</b> Subbiah Rathinagiri</p><p align='center'><b>Mac port &amp; editing improvements:</b> Theodore Whitten</p>"
                                      "<p align='center'>Original app: <b>GEMINI CLI</b> and Qt6.<br>Mac improvements: <b>Codex</b> assistance.</p>"), frame);
@@ -898,6 +898,9 @@ void MainWindow::createToolbar()
     QAction *invertObject=objectTools->addAction(customIcon("swap"),tr("Switch Add/Subtract"));
     invertObject->setObjectName("invertSelectionModeAction");
     invertObject->setToolTip(tr("Switch the selected object's Add/Subtract mode"));
+    QAction *movePolygon=objectTools->addAction(customIcon("pan"),tr("Move polygon"));
+    movePolygon->setObjectName("movePolygonAction");movePolygon->setCheckable(true);
+    movePolygon->setToolTip(tr("Drag the selected polygon as a whole in its eye. Shift-drag moves horizontally; Escape cancels a drag."));
     selectionLayout->addWidget(objectTools);
     QTreeWidget *objects=new QTreeWidget(selectionPanel);
     objects->setObjectName("selectionObjectsList");
@@ -911,7 +914,7 @@ void MainWindow::createToolbar()
     selectionLayout->addWidget(objects); selectionsDock->setWidget(selectionPanel);
     addDockWidget(Qt::RightDockWidgetArea,selectionsDock);
     selectionsDock->setMinimumWidth(290);
-    auto updateObjectActions=[objects,editObject,renameObject,deleteObject,moveObjectUp,moveObjectDown,invertObject]() {
+    auto updateObjectActions=[objects,editObject,renameObject,deleteObject,moveObjectUp,moveObjectDown,invertObject,movePolygon]() {
         auto item=objects->currentItem();
         editObject->setEnabled(item && item->data(1,Qt::UserRole+1).toBool());
         renameObject->setEnabled(item!=nullptr); deleteObject->setEnabled(item!=nullptr);
@@ -919,6 +922,8 @@ void MainWindow::createToolbar()
         moveObjectUp->setEnabled(row>0);
         moveObjectDown->setEnabled(row>=0 && row<objects->topLevelItemCount()-1);
         invertObject->setEnabled(item!=nullptr);
+        movePolygon->setEnabled(item && item->data(1,Qt::UserRole+1).toBool() && item->data(0,Qt::UserRole).toBool());
+        if (!movePolygon->isEnabled() && movePolygon->isChecked()) movePolygon->setChecked(false);
         invertObject->setToolTip(item ? (item->data(3,Qt::UserRole).toBool() ? tr("Change this selection to Add") : tr("Change this selection to Subtract"))
                                       : tr("Switch the selected object's Add/Subtract mode"));
     };
@@ -972,6 +977,16 @@ void MainWindow::createToolbar()
     });
     connect(invertObject,&QAction::triggered,this,[this,objects]() {
         if (auto item=objects->currentItem()) m_viewWidget->toggleSelectionOperation(item->data(1,Qt::UserRole).toString());
+    });
+    connect(movePolygon,&QAction::toggled,this,[this,anaglyph,pan,freehand](bool enabled) {
+        if (enabled) {
+            anaglyph->setChecked(false);pan->setChecked(false);freehand->setChecked(false);
+            if (auto clean=findChild<QAction *>("cleanPreviewAction")) clean->setChecked(false);
+        }
+        m_viewWidget->setPolygonMoveEnabled(enabled);
+    });
+    connect(m_viewWidget,&StereoViewWidget::polygonMoveModeChanged,this,[movePolygon](bool enabled) {
+        QSignalBlocker blocker(movePolygon);movePolygon->setChecked(enabled);
     });
     QMenu *viewMenu=menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(maskPreview); viewMenu->addAction(cleanPreview); viewMenu->addAction(selectionsDock->toggleViewAction());
@@ -1117,7 +1132,7 @@ void MainWindow::checkForUpdates()
 void MainWindow::showAbout()
 {
     QMessageBox aboutBox(QMessageBox::Information, tr("About StereoMask"),
-        tr("<h2>StereoMask v2.1.0</h2>"
+        tr("<h2>StereoMask v2.1.1</h2>"
            "<p>A precision masking tool for side-by-side stereo images.</p>"
            "<p><b>Original Stereomasken creator:</b> Bernd Paksa.</p>"
            "<p>StereoMask is inspired by his Stereomasken program and its creative "

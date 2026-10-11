@@ -48,10 +48,12 @@ public:
     void deleteSelection(const QString &id);
     void moveSelection(const QString &id, int offset);
     void toggleSelectionOperation(const QString &id);
+    void setPolygonMoveEnabled(bool enabled);
+    bool polygonMoveEnabled() const { return m_polygonMoveEnabled; }
     bool editSelection(const QString &id);
     void selectSelection(const QString &id) { m_activeSelectionId=id; update(); }
 
-    void setBrushMode(int mode) { if (m_refining) return; if (mode < 7) { if (m_lassoClosed) finishLasso(); else cancelLasso(); } m_brushMode = mode; m_panMode = false; m_freehandMode = false; m_pickingColor = false; setCursor((mode == 3 || mode >= 7) ? Qt::CrossCursor : mode ? Qt::BlankCursor : Qt::ArrowCursor); setFocus(); update(); }
+    void setBrushMode(int mode) { if (m_refining) return; setPolygonMoveEnabled(false); if (mode < 7) { if (m_lassoClosed) finishLasso(); else cancelLasso(); } m_brushMode = mode; m_panMode = false; m_freehandMode = false; m_pickingColor = false; setCursor((mode == 3 || mode >= 7) ? Qt::CrossCursor : mode ? Qt::BlankCursor : Qt::ArrowCursor); setFocus(); update(); }
     int brushMode() const { return m_brushMode; }
     void setBrushSize(int size) { m_brushSize = qBound(1, size, 1000); update(); }
     void setCutoutColor(const QColor &color) { m_cutoutColor = color; setCutoutBackground(3); }
@@ -79,7 +81,7 @@ public:
     QPainterPath completedLasso(bool right) const { return right ? m_completedRight : m_completedLeft; }
     void applyLassoSelection(bool right, const QImage &mask, const QPainterPath &outline);
     void clearPaintedReveal();
-    void fitView() { m_zoom=1.0f; m_panOffset=QPointF(); update(); setFocus(); }
+    void fitView() { if (m_draggingPolygon) return; m_zoom=1.0f; m_panOffset=QPointF(); update(); setFocus(); }
     void cancelLasso();
     void removeLassoSegment();
     bool hasLasso() const { return !m_lassoAnchors.isEmpty(); }
@@ -164,6 +166,7 @@ public:
     QString imagePath() const { return m_imagePath; }
 
 signals:
+    void polygonMoveModeChanged(bool enabled);
     void selectionObjectsChanged();
     void lassoOperationChanged(bool subtract);
     void smartStatus(const QString &message);
@@ -199,6 +202,12 @@ protected:
 
 private:
     QVector<SelectionObject> m_selectionObjects;
+    bool m_polygonMoveEnabled=false,m_draggingPolygon=false;
+    QString m_draggedPolygonId;
+    SelectionState m_beforePolygonDrag;
+    QPointF m_polygonDragStart,m_polygonDragDelta;
+    QRect m_polygonDragViewport;
+    float m_polygonDragScale=1.0f;
     QImage m_baseRevealLeft, m_baseRevealRight;
     QPainterPath m_baseOutlineLeft, m_baseOutlineRight;
     QString m_editingSelectionId;

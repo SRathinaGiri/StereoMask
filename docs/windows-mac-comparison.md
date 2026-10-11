@@ -1,10 +1,10 @@
-# Windows v2.1.0 vs Mac R10: Comparison and Porting Checklist
+# Windows v2.1.1 vs Mac R10: Comparison and Porting Checklist
 
 ## Verified Baseline
 
 Compared on **2026-10-11**, using the current Windows working source and fetched `origin/main` of [TedInVR/StereoMask-Mac](https://github.com/TedInVR/StereoMask-Mac). The Mac tip is [`94c8ff8269d5e0e744ddb8aefcd61e487bcc6e73`](https://github.com/TedInVR/StereoMask-Mac/commit/94c8ff8269d5e0e744ddb8aefcd61e487bcc6e73), dated 2026-10-10, R10. Fetch confirmed it had not advanced beyond the inspected checkout. Mac source was read, not modified or built on macOS.
 
-The Windows comparison was made against the working source subsequently prepared for the [v2.1.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0). Its preceding published baseline is v2.0.0 (`9da98e0`). Recheck when either repository changes; the Mac baseline above remains the inspected R10 revision.
+The comparison covers [v2.1.0](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0) and the whole-polygon movement added in [v2.1.1](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.1). The original preceding Windows baseline is v2.0.0 (`9da98e0`). Recheck when either repository changes; the Mac baseline above remains the inspected R10 revision.
 
 This is the complete user-facing feature/behavior and integration checklist for these baselines, not a line-by-line formatting diff.
 
@@ -16,7 +16,7 @@ Mac also supplies the existing `magneticLassoPath` and GrabCut helpers. Neither 
 
 ## Windows Additions and Changes
 
-| # | Area | Windows v2.1.0 | Mac R10 / porting action |
+| # | Area | Windows v2.1.1 | Mac R10 / porting action |
 | --- | --- | --- | --- |
 | 1 | Independent applied objects | UUID, name, physical eye, operation, visibility, anchors, magnetic flags and path for each polygon; brush deltas are raster objects. | Flattened per-eye masks and merged outlines. Port `SelectionObject` and `SelectionState`. |
 | 2 | Selections panel | Dock lists eye/mode; row selection highlights the object's path. | No object dock or selected-object ID. |
@@ -44,6 +44,7 @@ Mac also supplies the existing `magneticLassoPath` and GrabCut helpers. Neither 
 | 24 | Freehand routing regression | Enabling Freehand releases lasso mouse routing so initial frame drawing works after switching tools. | Freehand exists, but its setter does not release lasso brush mode the same way. Port the fix, not a supposedly new tool. |
 | 25 | Original inspiration credits | About/welcome/README/credits name Bernd Paksa and link to original Stereomasken website; About link opens externally. | R10 names Subbiah/Theodore but not Bernd in About. Add original creative attribution without replacing modern authorship. |
 | 26 | Documentation and regression tests | Current ordered-object/shortcut/export guide; expanded geometry, pairing, cache, pixel and UI tests. | R10 documentation/tests cover earlier flattened-mask behavior. Port assertions with features. |
+| 27 | Whole-polygon drag (new in v2.1.1) | Selected visible polygon translates as a whole via four-arrow toolbar toggle. Shift-drag locks horizontal motion; Escape cancels, boundaries clamp the whole shape, one drag is one undo step. Paired partner stays independent. | No applied-object translation. Port the move-mode mouse routing and explicit before/after undo snapshot; do not retrace magnetic edges during a rigid translation. |
 
 ## Source Map
 

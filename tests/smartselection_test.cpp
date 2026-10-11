@@ -41,6 +41,12 @@ static void click(QWidget &view, QPoint pos, Qt::KeyboardModifiers modifiers = Q
     QMouseEvent release(QEvent::MouseButtonRelease,QPointF(pos),QPointF(pos),Qt::LeftButton,Qt::NoButton,modifiers);
     QApplication::sendEvent(&view,&release);
 }
+static void drag(QWidget &view,QPoint from,QPoint to,Qt::KeyboardModifiers modifiers=Qt::NoModifier) {
+    QMouseEvent press(QEvent::MouseButtonPress,QPointF(from),QPointF(from),Qt::LeftButton,Qt::LeftButton,modifiers);
+    QMouseEvent move(QEvent::MouseMove,QPointF(to),QPointF(to),Qt::NoButton,Qt::LeftButton,modifiers);
+    QMouseEvent release(QEvent::MouseButtonRelease,QPointF(to),QPointF(to),Qt::LeftButton,Qt::NoButton,modifiers);
+    QApplication::sendEvent(&view,&press);QApplication::sendEvent(&view,&move);QApplication::sendEvent(&view,&release);
+}
 int main(int argc,char **argv) {
  QApplication app(argc,argv);
  try {
@@ -244,6 +250,36 @@ int main(int argc,char **argv) {
     const auto pairObjects=paired.selectionObjects();
     require(pairObjects.size()==2 && !pairObjects[0].right && pairObjects[1].right && pairObjects[0].id!=pairObjects[1].id,"paired polygons are not independent per-eye objects");
     for (int i=0; i<4; ++i) require(pairObjects[1].anchors[i]==pairObjects[0].anchors[i]-QPointF(12,0),"paired apply alignment incorrect");
+    paired.selectSelection(pairObjects[1].id);paired.setPolygonMoveEnabled(true);
+    const int moveIndex=paired.undoStack()->index();
+    drag(paired,QPoint(570,200),QPoint(600,215));
+    const auto shifted=paired.selectionObjects();
+    require(shifted[0].anchors==pairObjects[0].anchors && shifted[1].id==pairObjects[1].id && shifted.size()==2,"whole polygon move modifies its paired partner or identity");
+    for (int i=0;i<4;++i) require(QLineF(shifted[1].anchors[i],pairObjects[1].anchors[i]+QPointF(20,10)).length()<0.01,"whole polygon move does not translate all anchors equally");
+    require(shifted[1].path==QTransform::fromTranslate(20,10).map(pairObjects[1].path) && shifted[1].magnetic==pairObjects[1].magnetic,"polygon move changes shape or magnetic flags");
+    require(paired.undoStack()->index()==moveIndex+1,"polygon drag creates multiple undo commands");
+    require(paired.saveProject(),"moved polygon save failed");
+    StereoViewWidget movedReload;movedReload.setAutoSave(false);
+    require(movedReload.loadProject(temp.path()+"/paired.msk") && movedReload.selectionObjects()[1].anchors==shifted[1].anchors && movedReload.selectionObjects()[1].path==shifted[1].path && movedReload.selectionObjects()[0].anchors==pairObjects[0].anchors,"moved polygon JSON roundtrip failed");
+    paired.undoStack()->undo();require(paired.selectionObjects()[1].anchors==pairObjects[1].anchors,"polygon move undo failed");
+    paired.undoStack()->redo();require(paired.selectionObjects()[1].anchors==shifted[1].anchors,"polygon move redo failed");paired.undoStack()->undo();
+    drag(paired,QPoint(570,200),QPoint(600,215),Qt::ShiftModifier);
+    require(QLineF(paired.selectionObjects()[1].anchors[0],pairObjects[1].anchors[0]+QPointF(20,0)).length()<0.01,"Shift-drag does not constrain polygon horizontally");paired.undoStack()->undo();
+    drag(paired,QPoint(170,200),QPoint(200,215));require(paired.selectionObjects()[1].anchors==pairObjects[1].anchors && !paired.hasLasso(),"wrong-eye drag changes polygon or draws outline");
+    drag(paired,QPoint(570,200),QPoint(570,200));require(paired.undoStack()->index()==moveIndex,"zero-length drag adds undo command");
+    drag(paired,QPoint(570,200),QPoint(1000,500));
+    const auto bounded=paired.selectionObjects()[1].path.boundingRect();
+    require(bounded.right()<=239.01 && bounded.bottom()<=179.01 && bounded.left()>=0 && bounded.top()>=0,"polygon move clips shape outside image");paired.undoStack()->undo();
+    QMouseEvent cancelPress(QEvent::MouseButtonPress,QPointF(570,200),QPointF(570,200),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    QMouseEvent cancelMove(QEvent::MouseMove,QPointF(600,215),QPointF(600,215),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+    QApplication::sendEvent(&paired,&cancelPress);QApplication::sendEvent(&paired,&cancelMove);
+    QKeyEvent cancelDrag(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QApplication::sendEvent(&paired,&cancelDrag);
+    require(paired.selectionObjects()[1].anchors==pairObjects[1].anchors && paired.undoStack()->index()==moveIndex,"Escape does not cancel polygon move");
+    paired.setSwapSides(true);drag(paired,QPoint(170,200),QPoint(200,215));
+    require(QLineF(paired.selectionObjects()[1].anchors[0],pairObjects[1].anchors[0]+QPointF(20,10)).length()<0.01,"swapped polygon drag uses wrong physical eye");paired.undoStack()->undo();paired.setSwapSides(false);
+    paired.setZoom(2);drag(paired,QPoint(550,200),QPoint(580,215));
+    require(QLineF(paired.selectionObjects()[1].anchors[0],pairObjects[1].anchors[0]+QPointF(10,5)).length()<0.01,"zoomed polygon movement uses screen instead of image coordinates");paired.undoStack()->undo();paired.fitView();
+    paired.setPolygonMoveEnabled(false);
     paired.undoStack()->undo();require(paired.selectionObjects().isEmpty(),"paired undo leaves one eye behind");
     paired.undoStack()->redo();require(paired.selectionObjects().size()==2,"paired redo failed");
     require(paired.editSelection(pairObjects[0].id),"paired object cannot reopen");
@@ -276,6 +312,17 @@ int main(int argc,char **argv) {
     paired.setPairedLassoEnabled(true); paired.setBrushMode(8);
     click(paired,QPoint(120,145));click(paired,QPoint(250,145));click(paired,QPoint(250,230)); paired.finishLasso();
     require(paired.selectionObjects().size()==beforeNavigation.size()+5 && paired.selectionObjects().last().magnetic.contains(true) && !paired.selectionObjects().last().path.isEmpty(),"smart paired lasso lost magnetic segments");
+    const auto smartMoving=paired.selectionObjects().last();
+    paired.selectSelection(smartMoving.id);paired.setPolygonMoveEnabled(true);
+    const QPoint smartStart(qRound(419.5+smartMoving.anchors[0].x()*1.5),qRound(64.5+smartMoving.anchors[0].y()*1.5));
+    drag(paired,smartStart,smartStart+QPoint(30,15));
+    const auto movedSmart=paired.selectionObjects().last();
+    require(movedSmart.path.elementCount()==smartMoving.path.elementCount(),"moving smart polygon changes its contour point count");
+    for (int i=0;i<smartMoving.path.elementCount();++i) {
+        const auto before=smartMoving.path.elementAt(i),after=movedSmart.path.elementAt(i);
+        require(before.type==after.type && QLineF(QPointF(after.x,after.y),QPointF(before.x+20,before.y+10)).length()<0.001,"moving smart polygon retraces rather than translating its shape");
+    }
+    paired.undoStack()->undo();paired.setPolygonMoveEnabled(false);
     QImage blankPair(480,180,QImage::Format_RGB32); blankPair.fill(Qt::white);
     const QString fallbackFile=temp.path()+"/fallback.png"; require(blankPair.save(fallbackFile),"fallback fixture save failed");
     StereoViewWidget fallbackView;fallbackView.setAutoSave(false);fallbackView.resize(800,400);
