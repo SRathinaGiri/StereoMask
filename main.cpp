@@ -4,11 +4,13 @@
 #include <QDebug>
 #include <QLibraryInfo>
 #include "mainwindow.h"
+#include "appversion.h"
 
 int main(int argc, char *argv[])
 {
     QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedStates));
     QApplication a(argc, argv);
+    a.setApplicationVersion(STEREOMASK_VERSION);
 
     qDebug() << "--- StereoMask Diagnostics ---";
     qDebug() << "Library Path:" << QCoreApplication::libraryPaths();
@@ -16,6 +18,7 @@ int main(int argc, char *argv[])
     qDebug() << "------------------------------";
 
     MainWindow w;
+    w.setWindowTitle("StereoMask v2.1.0");
     w.show();
     return a.exec();
 }

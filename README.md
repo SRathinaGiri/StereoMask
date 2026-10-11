@@ -1,69 +1,110 @@
-# StereoMask v2.0.0
+# StereoMask v2.1.0
 
-A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
+StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask screenshot](Screenshot.jpg)
 
-## New in v2.0.0
+The screenshot is a historical illustration. The current interface includes the Selections panel and tools below. Download the packaged Windows build from the [v2.1.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0); extract the complete ZIP before running StereoMask.exe.
 
-- **OpenCV AutoMask:** Native MinGW/OpenCV stereo matching creates editable mask points from SBS image overlap.
-- **Depth-Aware Auto Points:** Auto-generated points carry per-point disparity so the right-eye mask follows depth offsets.
-- **Freehand Mask Drawing:** Draw masks directly with a simplified editable polygon output.
-- **Freehand Cleanup:** Freehand strokes are smoothed, simplified, and capped to a practical point count.
-- **Undoable Mask Creation:** AutoMask and Freehand mask creation integrate with the existing undo stack.
-- **Bundled OpenCV Runtime:** Release builds copy required vcpkg/OpenCV DLLs beside the application.
+## Current Features
 
-## New in v1.3.0
+- **Frame editing:** Add, insert, move and multi-select frame points, set disparity/depth, align and transform points, and edit curves and handles.
+- **Three AutoMask choices:** QTAGENT Rect Decompose, SGBM Contour and Legacy Smart Mask produce editable starting frames using native OpenCV. Check the shape and depth; accuracy is not guaranteed for every photograph.
+- **Freehand framing:** Initial strokes are smoothed, simplified and capped to a practical point count. Freehand and AutoMask require an empty frame.
+- **Per-eye brushes:** Select Brush preserves painted foreground; Erase Brush removes painted preservation. Adjustable size, visible cursor, bracket-key resizing and stroke Undo/Redo.
+- **Polygonal and smart lassos:** Straight segments or OpenCV-assisted contrast-edge paths, Add/Subtract operations, and adjustable anchors.
+- **Selection objects:** Stable identities, names, physical eye, operation, visibility, anchors and list order in project JSON. The Selections dock supports Edit points, rename, eye-icon visibility, delete, Move Up/Down and Switch Add/Subtract. Brush strokes are raster objects; old flattened masks import as groups.
+- **Ordered holes:** The frame opening is the starting area; visible objects apply top to bottom. Add reveals pixels; Subtract covers them, even inside the frame. A later Add can reopen an earlier subtraction.
+- **Anchor insertion/removal:** Shift-click an edge to insert, including closing/magnetic edges. Ctrl-click a point to remove it and reconnect neighbors. Closed polygons retain at least three points. Apply commits changes; Undo restores the previous polygon.
+- **Paired lasso:** The connected-circles toggle creates an estimated opposite-eye polygon on new Apply. Source-resolution OpenCV patch matching and disparity fallback assist alignment. Two independent objects remain afterward; inspect and adjust the copied outline.
+- **Aligned navigation:** Shared zoom/pan, pointer-centered wheel zoom, arrows to scroll, Shift+Arrow for larger steps, Space/Alt/middle-button drag to pan, Ctrl+0 fit and Ctrl+Plus/Minus zoom. Unfinished lassos are retained.
+- **Export-consistent preview:** Preview Mask uses the same per-eye compositing as the selected export mode. Match preview uses mask color/opacity; solid cutouts use their chosen background. Transparent SBS preview uses a non-exported checkerboard. Composed eye images are cached.
+- **Clean Preview:** F8 hides editing marks, hints and cursors while retaining the selected export appearance. Zoom/pan remain available; turn it off to draw. It does not automatically apply unfinished work.
+- **Synced appearance:** Mask color and Pick mask color edit the same value as Settings. The swatch and opacity follow Settings and loaded projects. Sampling does not switch export mode or change custom cutout color.
+- **Projects/export:** Editable .msk JSON, optional AutoSave, source-resolution PNG/JPEG output, outer padding and inter-eye gap. Export runs asynchronously and reports completion/failure.
+- **Stereo inspection:** Anaglyph honors composed physical-eye masks and the export appearance. Swap changes display order only; export stays left-eye/right-eye.
+- **Help/updates:** Bundled offline guide, manual Windows GitHub update checking, original-author credits and dependency notices.
 
-- **Grouped Two-Row Toolbar:** Cleaner File/View and Edit/Mask toolbars with grouped controls.
-- **Custom Scalable Icons:** Replaced emoji and legacy 16px icons with a consistent in-app vector icon set.
-- **Curve-Aware Rotation:** Curve and Rx/Ry/Rz controls are grouped together; rotation is enabled only for curved selections.
-- **Async Export:** Export runs off the UI thread and reports success/failure accurately.
-- **Safer Image Handling:** Added SBS dimension validation and bounded image allocation.
+## Quick Workflow
 
-## New in v1.2
+1. Open a parallel SBS pair (physical left eye on the left). Convert cross-view source order before importing; display Swap does not convert export order.
+2. Create and adjust a frame manually, with Freehand, or with AutoMask.
+3. Choose Polygonal lasso or Smart polygon lasso, then Add/Subtract. Zoom/pan to trace. Enable paired lasso if useful.
+4. Ctrl+Enter closes and applies a valid outline. Inspect both eyes, especially an automatically aligned copy.
+5. Use the Selections panel to edit, hide, reorder, rename, delete or switch an object's operation.
+6. Choose the export appearance, inspect Clean Preview, Save the project, then Export.
 
-- **Refined Mask Feathering:** Soften mask edges with pixel-perfect precision (0-200px) without affecting image borders.
-- **Snapping Toggle:** Quickly toggle point snapping on/off via the toolbar or shortcut (**`S`**).
-- **Export Progress Tracking:** Real-time feedback in the status bar during image export.
-- **Smart Folder Persistence:** Automatically remembers the last used directory for all file operations.
-- **Optimized Rendering:** Improved masking engine with better memory safety and performance capping.
+## Export Appearance and Colors
 
-## Core Features
+| Export background | Result |
+| --- | --- |
+| Match preview | Mask color blended at the chosen opacity outside the ordered opening. A 95% white mask retains 5% of the original photo there. Default for new images. |
+| Transparent (PNG) | Masked pixels become transparent. PNG required. Preview shows a checkerboard; other viewers may use black. |
+| Black / White | Fully opaque solid cutout background; mask opacity does not apply. |
+| Custom cutout color... | Separately chosen solid cutout color; mask opacity does not apply. |
 
-- **Grouped Toolbar:** Intuitive controls for file operations, editing, masking, and transforms.
-- **Precision Masking:** Add, move, and multi-select points to define custom masks for 3D images.
-- **OpenCV AutoMask:** Generate editable mask polygons from stereo disparity using native C++ OpenCV.
-- **Freehand Masking:** Draw an initial mask shape by hand, then refine the generated control points.
-- **Masked Anaglyph Preview:** Real-time 3D preview of your mask using Red/Cyan channels, supporting both parallel and cross-eye sources.
-- **Project Persistence (.msk):** Save your work as mask projects that store point data and project-specific settings.
-- **Interleaving Space:** Configure gaps between eye images in exported masks, filled with customizable background colors.
-- **AutoSave:** Optional automatic saving of project changes.
-- **Recent Files:** Quick access to the last 5 worked-on projects.
-- **High-DPI Support:** Fully optimized for 4K and multi-monitor setups.
+Existing projects retain their saved mode. Preview Mask and Clean Preview honor it; toggling preview does not change export mode. Export omits editing marks and does not depend on view zoom/pan.
 
-## Author
+**Mask color**, **Pick mask color**, and Settings' **Mask Color/Opacity** are synchronized. **Padding/gap color** fills exported margins/inter-eye gap in Match preview; cutout modes use their selected background for margins too. The picker samples the source image, not arbitrary desktop pixels.
 
-**S. Rathinagiri**
+Preview Feather softens the frame boundary in Match preview and its export when enabled. Polygon edges are antialiased; per-object feathering is not implemented.
 
-## License
+## Keyboard and Mouse Reference
 
-This project is licensed under the [MIT License](LICENSE).
+| Input | Action |
+| --- | --- |
+| Ctrl+N / Ctrl+O / Ctrl+S | New image / open project / save |
+| Ctrl+Shift+E | Export |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Enter, keypad Enter, or C | Close lasso without applying |
+| Ctrl+Enter | Close and apply a lasso with at least three points |
+| Shift-click a lasso edge | Insert a point |
+| Ctrl-click a lasso point | Remove that point; closed polygons retain three |
+| Delete / Backspace during lasso editing | Remove last anchor and reopen outline |
+| Escape | Cancel open lasso; apply closed lasso; cancel color picking |
+| F8 | Toggle Clean Preview |
+| Arrow / Shift+Arrow | Scroll both eyes / scroll farther |
+| Ctrl+0 / Ctrl+Plus or Equals / Ctrl+Minus | Fit / zoom in / zoom out |
+| Wheel / Space-drag / Alt-drag / middle-button drag | Pointer zoom / aligned pan |
+| P / S | Toggle Pan / frame-point Snap |
+| [ / ] | Smaller / larger brush |
+| Right-click in Edit frame | Add a point or insert near an edge |
+| Ctrl-click frame dots / Shift-drag selected dots | Change multi-selection / adjust disparity |
 
-## Requirements
+Lasso gestures apply to the pending outline or a polygon reopened with Edit points. Keep keyboard focus in the image. Clicking away from a closed outline can apply it and start another; Save/Export also apply closed pending outlines. Explicitly apply and save before quitting.
 
-- Qt 6.x
-- CMake 3.16+
-- C++17 Compatible Compiler
-- OpenCV 4 built for MinGW via vcpkg (`opencv4:x64-mingw-dynamic`)
+## Limitations
 
-## Building
+Smart lasso and paired alignment are assistance, not guaranteed segmentation. Shadows, textures, occlusions, repeated patterns, vertical misalignment and large depth differences can produce wrong boundaries. Pairing searches corresponding rows and retains Y alignment. Inspect both eyes.
+
+AutoMask remains one editable frame boundary, not the complete calibrated multi-region QTAGENT design. Disparity uses resized working images where appropriate; export retains source resolution. Magnetic paths may cap their local working region. Older flattened masks do not contain recoverable separate polygon anchors.
+
+Canvas click-to-select applied polygons, selection groups and per-object feathering are not implemented yet. Unmodified Mac R10 cannot losslessly round-trip the newer object model or Match preview mode; exchange copies until it is updated.
+
+## Documentation and Mac Handoff
+
+- [Offline User Guide](docs/user-guide.html): workflows, tools, shortcuts and troubleshooting.
+- [Windows/Mac Comparison and Porting Checklist](docs/windows-mac-comparison.md): verified baseline, feature differences, source map, JSON compatibility and port order.
+- [Mac Integration](docs/mac-integration.md): original import provenance.
+- [Credits](CREDITS.md): inspiration, collaborators and dependencies.
+
+## Credits and License
+
+**Bernd Paksa**, creator of [Stereomasken](https://www.stereomasken.de/index_en.htm), supplied the original creative stereo-framing ideas.
+
+**S. Rathinagiri (Subbiah Rathinagiri)** maintains the [Windows project](https://github.com/SRathinaGiri/StereoMask). **Theodore Whitten** maintains [StereoMask Mac](https://github.com/TedInVR/StereoMask-Mac) and contributed the foreground-editing foundation imported into Windows. Original development credits include GEMINI CLI and Qt 6; later collaboration includes Codex assistance. The original [MIT license](LICENSE) is retained; binary packages also need dependency notices for Qt/OpenCV and their libraries.
+
+## Build and Test on Windows
+
+Qt 6 Widgets/Gui/Core/Concurrent/Network, CMake 3.16+, C++17, and compatible MinGW/OpenCV runtimes are required. The current local toolchain is Qt 6.11.0, Qt's MinGW 13.1 and vcpkg OpenCV 4.12.0 (x64-mingw-dynamic).
 
 ```powershell
 $env:PATH = "D:\Qt\6.11.0\mingw_64\bin;D:\Qt\Tools\mingw1310_64\bin;" + $env:PATH
-cmake -B build -S . -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake -B build -S . -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DSTEREOMASK_BUILD_TESTS=ON
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
 ```
 
-The project expects the vcpkg OpenCV install at `D:\vcpkg\installed\x64-mingw-dynamic`.
-The build copies the required OpenCV runtime DLLs into `build\` beside `StereoMask.exe`.
+CMake uses the compatible OpenCV install at D:\vcpkg\installed\x64-mingw-dynamic when present; supply OpenCV_DIR for another install. Package the executable with Qt/MinGW/OpenCV DLLs, Qt plugins, README, credits, license, guide and dependency notices. Extract the complete ZIP, not only the executable. Help is also embedded in the app.
+
+Three CTest suites cover selection/geometry/export, help/UI and update checking. Synthetic tests do not certify segmentation quality on every image or validate Mac packaging.

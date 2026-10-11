@@ -1,5 +1,7 @@
 # StereoMask v1.1
 
+> Historical nested source snapshot. This document describes v1.1, not the current application. Use the [current root README](../README.md), [offline guide](../docs/user-guide.html), and [Windows/Mac porting comparison](../docs/windows-mac-comparison.md) for v2.1.0 features and behavior.
+
 A precision masking tool for side-by-side (SBS) stereo images, developed with **GEMINI CLI** and Qt6.
 
 ## Features

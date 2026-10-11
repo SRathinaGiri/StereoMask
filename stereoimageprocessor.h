@@ -20,7 +20,10 @@ public:
 
     bool isValid() const { return !m_left.isNull() && !m_right.isNull(); }
 
-    void createAnaglyph(bool swapped = false, const QVector<MaskPoint>* points = nullptr, const QColor& maskColor = Qt::black, float opacity = 0.6f);
+    void createAnaglyph(bool swapped = false, const QVector<MaskPoint>* points = nullptr, const QColor& maskColor = Qt::black, float opacity = 0.6f,
+                        const QImage *revealLeft = nullptr, const QImage *revealRight = nullptr,
+                        const QImage *openingLeft = nullptr, const QImage *openingRight = nullptr);
+    void createAnaglyphFromEyes(const QImage &left, const QImage &right, bool swapped = false);
 
 private:
 

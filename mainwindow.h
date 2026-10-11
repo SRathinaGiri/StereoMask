@@ -11,6 +11,7 @@
 class StereoViewWidget;
 class QSpinBox;
 class QAction;
+class UpdateChecker;
 template <typename T> class QFutureWatcher;
 
 struct AppSettings {
@@ -54,6 +55,7 @@ private slots:
     void toggleSwapSides(bool enabled);
     void showSettings();
     void showHelp();
+    void checkForUpdates();
     void showAbout();
     void openRecentFile();
 
@@ -68,6 +70,8 @@ private:
     QMenu *m_recentFilesMenu;
     QAction *m_recentFileActions[5];
     QSpinBox *m_opacitySpin;
+    UpdateChecker *m_updateChecker;
+    QAction *m_checkUpdatesAction;
     QFutureWatcher<bool> *m_exportWatcher;
     QList<QAction*> m_rotationActions;
 };

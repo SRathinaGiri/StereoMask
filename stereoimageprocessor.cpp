@@ -74,7 +74,9 @@ bool StereoImageProcessor::loadSideBySide(const QString &fileName)
     return true;
 }
 
-void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>* points, const QColor& maskColor, float opacity)
+void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>* points, const QColor& maskColor, float opacity,
+                                          const QImage *revealLeft, const QImage *revealRight,
+                                          const QImage *openingLeft, const QImage *openingRight)
 {
     if (m_left.isNull() || m_right.isNull())
         return;
@@ -87,15 +89,17 @@ void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>
     QImage redImg = srcRed;
     QImage gbImg = srcGB;
 
-    if (points && !points->isEmpty()) {
+    if ((points && !points->isEmpty()) || openingLeft || openingRight) {
         auto applyMask = [&](QImage& target, bool isRightEye) {
-            QPainter p(&target);
+            QImage overlay(target.size(), QImage::Format_ARGB32_Premultiplied);
+            overlay.fill(Qt::transparent);
+            QPainter p(&overlay);
             p.setRenderHint(QPainter::Antialiasing);
             
             QPainterPath path;
             path.addRect(target.rect());
             
-            if (!points->isEmpty()) {
+            if (points && !points->isEmpty()) {
                 for (int i = 0; i < points->count(); ++i) {
                     const auto &pt = (*points)[i];
                     float d = isRightEye ? pt.disparity : 0;
@@ -139,12 +143,34 @@ void StereoImageProcessor::createAnaglyph(bool swapped, const QVector<MaskPoint>
             fill.setAlphaF(opacity);
             p.setPen(Qt::NoPen);
             p.fillPath(path, fill);
+            const QImage *reveal = isRightEye ? revealRight : revealLeft;
+            if (reveal && !reveal->isNull()) {
+                p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+                p.drawImage(0, 0, *reveal);
+            }
+            const QImage *opening=isRightEye ? openingRight : openingLeft;
+            if (opening && !opening->isNull()) {
+                p.setCompositionMode(QPainter::CompositionMode_Source);
+                p.fillRect(overlay.rect(),fill);
+                p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+                p.drawImage(0,0,*opening);
+            }
             p.end();
+            QPainter composite(&target);
+            composite.drawImage(0, 0, overlay);
         };
         applyMask(redImg, swapped);   // If swapped, Red uses Right eye data (which has disparity)
         applyMask(gbImg, !swapped);   // If swapped, GB uses Left eye data (no disparity)
     }
 
+    createAnaglyphFromEyes(redImg,gbImg);
+}
+
+void StereoImageProcessor::createAnaglyphFromEyes(const QImage &left, const QImage &right, bool swapped) {
+    if (left.isNull() || left.size()!=right.size()) return;
+    const QImage redImg=(swapped ? right : left).convertToFormat(QImage::Format_RGB32);
+    const QImage gbImg=(swapped ? left : right).convertToFormat(QImage::Format_RGB32);
+    m_anaglyph=QImage(left.size(),QImage::Format_RGB32);
     for (int y = 0; y < redImg.height(); ++y) {
         const QRgb *redLine = reinterpret_cast<const QRgb*>(redImg.scanLine(y));
         const QRgb *gbLine = reinterpret_cast<const QRgb*>(gbImg.scanLine(y));

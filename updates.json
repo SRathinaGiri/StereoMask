@@ -1,0 +1,6 @@
+{
+  "version": "2.1.0",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0",
+  "package_type": "app",
+  "notes": "Windows v2.1.0: independent ordered selection objects with editable anchors and frame holes; smart and paired lassos; insert/remove points and quick apply; aligned keyboard scrolling; clean and export-consistent preview; Match preview export with mask opacity; synchronized mask colors; selectable OpenCV AutoMask and freehand framing. Includes updated offline help and a Mac R10 porting checklist."
+}
