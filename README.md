@@ -2,9 +2,9 @@
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
-![StereoMask screenshot](Screenshot.jpg)
+![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-The screenshot is a historical illustration. The current interface includes the Selections panel and tools below. Download the packaged Windows build from the [v2.1.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.1.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.1.0); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
 
