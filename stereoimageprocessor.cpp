@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QImageReader>
 #include <QFile>
+#include <QtMath>
 
 StereoImageProcessor::StereoImageProcessor()
 {
@@ -67,6 +68,9 @@ bool StereoImageProcessor::loadSideBySide(const QString &fileName)
 
     m_left = fullImage.copy(0, 0, width, height);
     m_right = fullImage.copy(width, 0, width, height);
+    m_originalLeft = m_left;
+    m_originalRight = m_right;
+    m_windowOffset = 0;
 
     qDebug() << "Image loaded successfully. Size:" << width << "x" << height;
 
@@ -183,4 +187,46 @@ void StereoImageProcessor::createAnaglyphFromEyes(const QImage &left, const QIma
             dstLine[x] = qRgb(r, g, b);
         }
     }
+}
+
+QImage StereoImageProcessor::shiftedEye(const QImage &source, int shift)
+{
+    if (shift == 0) return source;
+    QImage result(source.size(), QImage::Format_ARGB32_Premultiplied);
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    painter.drawImage(shift, 0, source);
+    return result;
+}
+
+void StereoImageProcessor::setStereoWindowOffset(int pixels)
+{
+    if (!isValid() || m_originalLeft.isNull()) return;
+    m_windowOffset = qBound(-m_originalLeft.width() / 2, pixels, m_originalLeft.width() / 2);
+    const int leftShift = qCeil(m_windowOffset / 2.0);
+    const int rightShift = leftShift - m_windowOffset;
+    m_left = shiftedEye(m_originalLeft, leftShift);
+    m_right = shiftedEye(m_originalRight, rightShift);
+    createAnaglyph();
+}
+
+QImage StereoImageProcessor::stereoWindowPreview(int pixels, bool anaglyph, bool swapped) const
+{
+    if (!isValid() || m_originalLeft.isNull()) return {};
+    pixels = qBound(-m_originalLeft.width() / 2, pixels, m_originalLeft.width() / 2);
+    const int leftShift = qCeil(pixels / 2.0);
+    const QImage left = shiftedEye(m_originalLeft, leftShift);
+    const QImage right = shiftedEye(m_originalRight, leftShift - pixels);
+    if (anaglyph) {
+        StereoImageProcessor preview;
+        preview.createAnaglyphFromEyes(left, right, swapped);
+        return preview.anaglyphImage();
+    }
+
+    QImage pair(left.width() * 2, left.height(), QImage::Format_ARGB32_Premultiplied);
+    pair.fill(Qt::transparent);
+    QPainter painter(&pair);
+    painter.drawImage(0, 0, swapped ? right : left);
+    painter.drawImage(left.width(), 0, swapped ? left : right);
+    return pair;
 }
