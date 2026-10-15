@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
     qDebug() << "------------------------------";
 
     MainWindow w;
-    w.setWindowTitle("StereoMask v2.2.0");
+    w.setWindowTitle(QStringLiteral("StereoMask v%1").arg(STEREOMASK_VERSION));
     w.showMaximized();
     return a.exec();
 }

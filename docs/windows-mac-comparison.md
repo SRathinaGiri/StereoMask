@@ -1,5 +1,7 @@
 # Windows v2.1.1 vs Mac R10: Comparison and Porting Checklist
 
+Historical comparison only. For the current Windows v2.3.0 delta against fetched Mac R18, use [Windows-to-Mac Handoff](windows-to-mac-handoff.md). Do not treat the R10-only omissions below as omissions in Mac R18.
+
 ## Verified Baseline
 
 Compared on **2026-10-11**, using the current Windows working source and fetched `origin/main` of [TedInVR/StereoMask-Mac](https://github.com/TedInVR/StereoMask-Mac). The Mac tip is [`94c8ff8269d5e0e744ddb8aefcd61e487bcc6e73`](https://github.com/TedInVR/StereoMask-Mac/commit/94c8ff8269d5e0e744ddb8aefcd61e487bcc6e73), dated 2026-10-10, R10. Fetch confirmed it had not advanced beyond the inspected checkout. Mac source was read, not modified or built on macOS.

@@ -1,4 +1,8 @@
 #include "mainwindow.h"
+#include "appversion.h"
+#include "operationprogress.h"
+#include <QThread>
+#include <QProgressBar>
 #include "stereoviewwidget.h"
 #include <QApplication>
 #include <QComboBox>
@@ -40,6 +44,60 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QLocale::setDefault(QLocale(QLocale::English,QLocale::UnitedStates));
     QStandardPaths::setTestModeEnabled(true);
+    {
+        QMainWindow host;host.resize(640,400);host.show();app.processEvents();
+        bool responsive=false;
+        const bool hadCursor=QApplication::overrideCursor()!=nullptr;
+        {
+            OperationProgress progress(&host,"StereoMask - Working","Matching opposite-eye edges...");
+            auto immediate=host.findChild<QDialog *>("operationProgress");
+            auto initialMessage=immediate ? immediate->findChild<QLabel *>("operationMessage") : nullptr;
+            if(!initialMessage || !initialMessage->isVisible() || initialMessage->text().isEmpty() || initialMessage->height()<=0)return 60;
+            const QImage panel=immediate->grab().toImage();
+            if(immediate->testAttribute(Qt::WA_TranslucentBackground) || immediate->windowOpacity()!=1.0 ||
+               panel.pixelColor(8,8)!=QColor("#25282c")) {
+                std::cerr<<"Processing panel must have an opaque painted background\n";return 60;
+            }
+            QTimer::singleShot(0,&host,[&] {
+                auto dialog=host.findChild<QDialog *>("operationProgress");
+                auto message=dialog ? dialog->findChild<QLabel *>("operationMessage") : nullptr;
+                responsive=dialog && dialog->isVisible() && dialog->windowFlags().testFlag(Qt::FramelessWindowHint) &&
+                    message && message->isVisible() && message->text()=="Matching opposite-eye edges..." && message->height()>0 &&
+                    host.statusBar()->currentMessage()=="Matching opposite-eye edges...";
+                if(dialog)dialog->grab().save("windows-operation-progress-ui.png");
+            });
+            auto guiThread=QThread::currentThread();
+            const bool worker=progress.run([guiThread] {QThread::msleep(100);return QThread::currentThread()!=guiThread;});
+            if(!worker || !responsive){std::cerr<<"Progress dialog blocked painting/timers or calculation ran on GUI thread\n";return 60;}
+            progress.setStage("Updating masks...");
+            if(host.statusBar()->currentMessage()!="Updating masks...")return 60;
+            progress.setStage("Applying selection to the left eye...");
+            if(initialMessage->text()!="Applying selection to the left eye...")return 60;
+        }
+        if(host.findChild<QDialog *>("operationProgress") || (QApplication::overrideCursor()!=nullptr)!=hadCursor)return 60;
+        host.close();
+    }
+    {
+        QTemporaryDir openingTemp;
+        QImage image(480,180,QImage::Format_RGB32);image.fill(Qt::green);
+        const QString path=openingTemp.path()+"/opening.png";
+        if(!image.save(path))return 61;
+        StereoViewWidget openingView;openingView.setAutoSave(false);openingView.resize(800,400);openingView.show();app.processEvents();
+        bool openingMessage=false;
+        QTimer observe;observe.setSingleShot(true);
+        QObject::connect(&observe,&QTimer::timeout,&openingView,[&] {
+            auto dialog=openingView.findChild<QDialog *>("operationProgress");
+            auto label=dialog ? dialog->findChild<QLabel *>("operationMessage") : nullptr;
+            openingMessage=dialog && dialog->isVisible() && label && label->text()=="Opening image: opening.png";
+        });
+        observe.start(0);
+        if(!openingView.loadImage(path) || !openingMessage)return 61;
+        observe.stop();
+        if(openingView.findChild<QDialog *>("operationProgress"))return 61;
+        const QImage before=openingView.leftImage();
+        if(openingView.loadImage(openingTemp.path()+"/missing.png") || openingView.lastError().isEmpty() || openingView.leftImage()!=before)return 61;
+        openingView.close();
+    }
     BrowserCapture browser;
     QDesktopServices::setUrlHandler("file", &browser, "open");
     MainWindow window;
@@ -98,10 +156,12 @@ int main(int argc, char **argv) {
     }
     if (!algorithms) { std::cerr << "AutoMask choices lost during port\n"; return 5; }
     bool credited = false;
+    bool currentAboutVersion = false;
     QTimer::singleShot(0, &window, [&] {
         for (QMessageBox *box : window.findChildren<QMessageBox *>()) {
             if (box->windowTitle() != "About StereoMask") continue;
             const QString text = box->text();
+            currentAboutVersion = text.contains(QStringLiteral("<h2>StereoMask v%1</h2>").arg(STEREOMASK_VERSION));
             bool externalLink = false;
             for (QLabel *label : box->findChildren<QLabel *>()) {
                 if (label->text().contains("https://www.stereomasken.de/index_en.htm"))
@@ -113,6 +173,7 @@ int main(int argc, char **argv) {
     });
     QMetaObject::invokeMethod(&window, "showAbout", Qt::DirectConnection);
     if (!credited) { std::cerr << "Original creator attribution or clickable link missing\n"; return 7; }
+    if (!currentAboutVersion) { std::cerr << "About dialog does not use the shared application version\n"; return 7; }
     auto compact=window.findChild<QToolBar *>("compactControls");
     auto history=window.findChild<QDockWidget *>("selectionObjectsDock");
     auto guided=window.findChild<QAction *>("guidedProcessAction");
@@ -249,6 +310,28 @@ int main(int argc, char **argv) {
     bool shortcutText=false;
     QTimer::singleShot(0,[&]{auto dialog=window.findChild<QDialog *>("keyboardShortcutsDialog");if(!dialog)return;auto browser=dialog->findChild<QTextBrowser *>();shortcutText=browser && browser->toPlainText().contains("Ctrl") && browser->toPlainText().contains("Alt");dialog->reject();});
     keys->trigger();if(!shortcutText)return 44;
+    bool effectsWired=false,textApplyFeedback=false;
+    QTimer::singleShot(0,&window,[&] {
+        auto dialog=window.findChild<QDialog *>("stereoTextDialog");if(!dialog)return;
+        dialog->showNormal();dialog->resize(1200,900);QApplication::processEvents();
+        auto relief=dialog->findChild<QComboBox *>("textRelief");auto surface=dialog->findChild<QComboBox *>("textSurface");
+        auto x=dialog->findChild<QSpinBox *>("textTiltX"),y=dialog->findChild<QSpinBox *>("textTiltY"),z=dialog->findChild<QSpinBox *>("textTiltZ");
+        auto depth=dialog->findChild<QSpinBox *>("textReliefSize");
+        effectsWired=relief && relief->count()==3 && surface && surface->count()==2 && x && y && z && depth;
+        if(effectsWired){relief->setCurrentIndex(1);surface->setCurrentIndex(1);x->setValue(20);y->setValue(-30);z->setValue(12);depth->setValue(5);dialog->grab().save("windows-text-effects-ui.png");
+            QTimer::singleShot(0,&window,[&] {
+                auto progress=window.findChild<QDialog *>("operationProgress");
+                auto label=progress ? progress->findChild<QLabel *>("operationMessage") : nullptr;
+                textApplyFeedback=progress && progress->isVisible() && label && label->text().contains("Rendering text and bubbles for the left eye");
+                if(progress)progress->grab().save("windows-apply-text-progress-ui.png");
+            });
+            dialog->accept();}
+        else dialog->reject();
+    });
+    QMetaObject::invokeMethod(&window,"editStereoText",Qt::DirectConnection);
+    if(!effectsWired || !textApplyFeedback || view->textObjects().isEmpty())return 62;
+    const auto appliedText=view->textObjects().last();
+    if(appliedText.relief!=1 || appliedText.surface!=1 || appliedText.reliefSize!=5 || appliedText.tiltX!=20 || appliedText.tiltY!=-30 || appliedText.tiltZ!=12)return 62;
     guided->trigger();
     auto guidedDock=window.findChild<QDockWidget *>("guidedProcessDock");
     if(!guidedDock || !guidedDock->findChild<QPushButton *>("guidedNext") || !guidedDock->findChild<QLabel *>("guidedInstructions"))return 45;

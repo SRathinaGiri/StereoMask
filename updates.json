@@ -1,6 +1,6 @@
 {
-  "version": "2.2.0",
-  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.2.0",
+  "version": "2.3.0",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.3.0",
   "package_type": "app",
-  "notes": "Windows v2.2.0 adds the Mac R18 workflow and creative tool set: compact controls, History, Guided Process, editable shortcuts, Stereo Window adjustment, frame shapes, picture frames, drop shadows, and stereo text with speech/thought bubbles. It also adds Fuzzy Select and Select by Color Threshold, correct directional/depth alignment references, and visible color-tool cursors."
+  "notes": "Windows v2.3.0 adds embossed/engraved colored and cutout text, stereo pitch/yaw/roll with depth gradients, fixes steep-angle text clipping, and adds processing feedback including file opening and applying text/bubbles. It also improves frame-point creation, wheel scrolling, and centralized version reporting. See the release notes and Windows-to-Mac handoff for details."
 }

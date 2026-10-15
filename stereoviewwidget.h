@@ -50,6 +50,8 @@ struct SelectionState {
     QPainterPath outlineLeft, outlineRight;
 };
 
+class OperationProgress;
+
 class StereoViewWidget : public QWidget
 {
     Q_OBJECT
@@ -260,6 +262,7 @@ private:
     QRect m_smartRegionLeft, m_smartRegionRight, m_beforeRegion;
     QPointF m_regionStart;
     bool m_selectingRegion = false, m_smartRight = false, m_refining = false;
+    OperationProgress *m_operationProgress = nullptr;
     int m_smartRevision = 0;
     void loadBrushSettings(const QJsonObject &obj);
     QImage m_revealTintLeft, m_revealTintRight;
@@ -361,6 +364,10 @@ private:
     bool m_cleanPreviewEnabled = false;
     mutable QByteArray m_exportKeyLeft,m_exportKeyRight;
     mutable QImage m_exportCacheLeft,m_exportCacheRight;
+    QByteArray textOverlayKey(bool right) const;
+    QImage cachedTextOverlay(bool right) const;
+    mutable QByteArray m_textKeyLeft,m_textKeyRight;
+    mutable QImage m_textCacheLeft,m_textCacheRight;
     int m_padx = 0;
     int m_pady = 0;
     QColor m_bgColor = Qt::white;

@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(StereoMask VERSION 2.2.0 LANGUAGES CXX)
+# appversion.h is the single source of the current application version.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/appversion.h")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/appversion.h" version_declaration
+    REGEX "^inline constexpr const char \\*STEREOMASK_VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+\";")
+if(NOT version_declaration)
+    message(FATAL_ERROR "Missing numeric STEREOMASK_VERSION in appversion.h")
+endif()
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" app_version "${version_declaration}")
+project(StereoMask VERSION ${app_version} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,6 +41,7 @@ add_executable(StereoMask
     updatechecker.cpp
     updatechecker.h
     appversion.h
+    operationprogress.h
     smartselection.cpp
     smartselection.h
     mainwindow.cpp
@@ -56,7 +65,7 @@ if(WIN32)
     target_sources(StereoMask PRIVATE icon.rc)
 endif()
 if(APPLE)
-    set_target_properties(StereoMask PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER "org.stereomask.brush" MACOSX_BUNDLE_BUNDLE_NAME "StereoMask Mac" MACOSX_BUNDLE_SHORT_VERSION_STRING "2.2.0")
+    set_target_properties(StereoMask PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER "org.stereomask.brush" MACOSX_BUNDLE_BUNDLE_NAME "StereoMask Mac" MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}" MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
 endif()
 target_include_directories(StereoMask PRIVATE ${OpenCV_INCLUDE_DIRS})
 
@@ -135,7 +144,7 @@ if(STEREOMASK_BUILD_TESTS)
     set_tests_properties(smart-selection user-guide creative-tools PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${qt_bin_directory}/../plugins/platforms")
     if(WIN32)
-        set_tests_properties(user-guide PROPERTIES
+        set_tests_properties(user-guide creative-tools PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_QPA_PLATFORM_PLUGIN_PATH=${qt_bin_directory}/../plugins/platforms")
     endif()
 endif()

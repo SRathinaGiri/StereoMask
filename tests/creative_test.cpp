@@ -5,6 +5,8 @@
 #include <QPainter>
 #include <iostream>
 #include <cstdlib>
+#include <QJsonArray>
+#include <QtMath>
 
 static void require(bool value, const char *message)
 {
@@ -95,6 +97,7 @@ int main(int argc, char **argv)
     text.rect = QRectF(20, 20, 100, 80);
     text.tail = QPointF(40, 140);
     text.style = 2;
+    text.text.clear();
     text.fill = Qt::red;
     text.outline = 0;
     text.depth = 15;
@@ -105,10 +108,93 @@ int main(int argc, char **argv)
     const auto decoded = textFromJson(textToJson(text), QSize(360, 240));
     require(decoded.id == text.id && decoded.depth == 15 && decoded.tail == text.tail,
             "text JSON roundtrip");
+    StereoText sample;sample.id="relief";sample.text="MASK";sample.rect=QRectF(40,40,300,130);
+    sample.fontSize=72;sample.font.setBold(true);sample.color=QColor(40,145,180);sample.fill=QColor(180,85,125);
+    sample.outline=0;sample.reliefSize=5;
+    const QSize textSize(400,220);
+    const auto flat=textOverlay(textSize,{sample},false);
+    auto cutout=sample;cutout.surface=1;
+    const auto plate=textOverlay(textSize,{cutout},false);
+    int holes=0;
+    for(int y=40;y<170;++y)for(int x=40;x<340;++x)
+        if(qAlpha(flat.pixel(x,y))>240 && qAlpha(plate.pixel(x,y))<16)++holes;
+    require(holes>100,"cutout plate must have real transparent glyph holes");
+    require(plate.pixelColor(45,45)==sample.fill,"cutout plate background color");
+    sample.relief=1;const auto embossed=textOverlay(textSize,{sample},false);
+    require(embossed!=flat && embossed!=textOverlay(textSize,{sample},true),"emboss shading and stereo relief");
+    sample.relief=2;const auto engraved=textOverlay(textSize,{sample},false);
+    require(engraved!=flat && engraved!=embossed,"engrave reverses relief");
+    cutout.relief=1;const auto raisedPlate=textOverlay(textSize,{cutout},false);
+    cutout.relief=2;const auto recessedPlate=textOverlay(textSize,{cutout},false);
+    require(raisedPlate!=plate && recessedPlate!=raisedPlate && recessedPlate!=textOverlay(textSize,{cutout},true),"cutout rim relief and stereo depth");
+    sample.relief=0;sample.depth=14;const auto center=sample.rect.center();
+    for(int axis=0;axis<3;++axis) {
+        auto tilted=sample;
+        if(axis==0)tilted.tiltX=20;if(axis==1)tilted.tiltY=20;if(axis==2)tilted.tiltZ=20;
+        const auto a=stereoTextTransform(tilted,false),b=stereoTextTransform(tilted,true);
+        require(QLineF(a.map(center),center).length()<0.001 && QLineF(b.map(center),center-QPointF(14,0)).length()<0.001,"tilt pivot preserves center and base depth");
+        const QPointF detail=center+QPointF(70,35);
+        require(qAbs(a.map(detail).y()-b.map(detail).y())<0.001,"tilted stereo plane must retain vertical alignment");
+        if(axis<2)require(qAbs(a.map(detail).x()-b.map(detail).x()-14)>0.1,"pitch/yaw must create a stereo depth gradient");
+        require(textOverlay(textSize,{tilted},false)!=flat,"tilt changes rendered text");
+    }
+    sample.tiltZ=20;const auto leftTilt=stereoTextTransform(sample,false),rightTilt=stereoTextTransform(sample,true);
+    require(qAbs(leftTilt.map(center+QPointF(50,0)).y()-center.y()-50*qSin(qDegreesToRadians(20.0)))<0.001 &&
+            qAbs(rightTilt.map(center+QPointF(50,0)).y()-center.y()-50*qSin(qDegreesToRadians(20.0)))<0.001,"20 degree Z tilt must be 20 degrees in both eyes");
+    for(int angle:{-45,45})for(int axis=0;axis<4;++axis) {
+        auto sameTilt=sample;sameTilt.tiltX=sameTilt.tiltY=sameTilt.tiltZ=0;
+        if(axis==0 || axis==3)sameTilt.tiltX=angle;
+        if(axis==1 || axis==3)sameTilt.tiltY=angle;
+        if(axis==2 || axis==3)sameTilt.tiltZ=angle;
+        const auto l=stereoTextTransform(sameTilt,false),r=stereoTextTransform(sameTilt,true);
+        for(const auto &point:{sample.rect.topLeft(),sample.rect.topRight(),sample.rect.bottomLeft(),sample.rect.bottomRight(),center})
+            require(qAbs(l.map(point).y()-r.map(point).y())<0.001,"45 degree tilted plane must preserve vertical alignment in both eyes");
+        sameTilt.depth=0;
+        if(axis==2)require(textOverlay(textSize,{sameTilt},false)==textOverlay(textSize,{sameTilt},true),"roll alone must not introduce a stereo depth gradient");
+        if(axis<2) {
+            const QPointF front=axis==0 ? center+QPointF(0,40) : center-QPointF(70,0);
+            const double relative=l.map(front).x()-r.map(front).x()-sample.depth;
+            require((angle>0 ? relative : -relative)>0.1,"positive pitch brings bottom forward; positive yaw brings left forward");
+        }
+    }
+    for(int angle:{32,33,34,45,60,80,-45,-80})for(bool rightEye:{false,true}) {
+        auto steep=sample;steep.depth=0;steep.relief=1;steep.tiltX=angle;steep.tiltY=steep.tiltZ=0;
+        steep.rect=QRectF(800,650,300,130);
+        const auto image=textOverlay(QSize(2400,2000),{steep},rightEye);
+        int visible=0;
+        for(int y=600;y<850;++y)for(int x=700;x<1250;++x)visible+=qAlpha(image.pixel(x,y))>0;
+        require(visible>50,"embossed text disappears at steep X tilt on a large photo");
+    }
+    sample.relief=2;sample.surface=1;sample.tiltX=20;sample.tiltY=-30;
+    const auto saved=textFromJson(textToJson(sample),textSize);
+    require(saved.relief==2 && saved.surface==1 && saved.reliefSize==5 && saved.tiltX==20 && saved.tiltY==-30 && saved.tiltZ==20,"effect/tilt JSON roundtrip");
+    const auto legacy=textFromJson(QJsonObject{},textSize);
+    require(legacy.relief==0 && legacy.surface==0 && legacy.tiltX==0 && legacy.tiltY==0 && legacy.tiltZ==0,"legacy projects retain flat unrotated text");
+    auto invalid=textToJson(sample);invalid["tiltX"]=900;invalid["tiltY"]=-900;invalid["reliefSize"]=1000;
+    const auto clamped=textFromJson(invalid,textSize);
+    require(clamped.tiltX==80 && clamped.tiltY==-80 && clamped.reliefSize==32,"untrusted effect values are bounded");
+    QImage foreground(textSize,QImage::Format_ARGB32_Premultiplied);foreground.fill(Qt::white);
+    auto occluded=sample;occluded.foregroundCovers=true;
+    QImage empty(textSize,QImage::Format_ARGB32_Premultiplied);empty.fill(Qt::transparent);
+    require(textOverlay(textSize,{occluded},false,foreground)==empty,"foreground occludes transformed text effects");
+    QImage gallery(800,10*250,QImage::Format_RGB32);gallery.fill(QColor(225,230,234));
+    {QPainter painter(&gallery);for(int row=0;row<10;++row) {
+        auto item=sample;item.depth=0;item.tiltX=item.tiltY=item.tiltZ=0;item.surface=row>=3 && row<6 ? 1 : 0;item.relief=row%3;
+        if(row==6){item.relief=1;item.tiltX=20;item.tiltY=30;item.tiltZ=12;}
+        if(row>=7){item.relief=0;if(row==7)item.tiltX=60;if(row==8)item.tiltY=45;if(row==9)item.tiltZ=45;}
+        const QString label=row==7 ? "X +60: floor pose / pitch" : row==8 ? "Y +45: left side forward / yaw" : row==9 ? "Z +45: clockwise roll" : QString("%1 | %2").arg(item.surface ? "Cutout plate" : "Colored letters",item.relief==0 ? "Flat" : item.relief==1 ? "Embossed" : "Engraved");
+        painter.setPen(Qt::black);painter.drawText(12,row*250+20,label+" | left / right");
+        painter.drawImage(0,row*250+30,textOverlay(textSize,{item},false));painter.drawImage(400,row*250+30,textOverlay(textSize,{item},true));
+    }}
+    require(gallery.save("text-effects-gallery.png"),"effect gallery screenshot");
+    text.text="MASK";
+    text.relief=sample.relief;text.surface=sample.surface;text.reliefSize=sample.reliefSize;
+    text.tiltX=sample.tiltX;text.tiltY=sample.tiltY;text.tiltZ=sample.tiltZ;
     view.setTextObjects({text});
     view.undoStack()->undo();
     require(view.textObjects().isEmpty(), "text undo");
     view.undoStack()->redo();
+    require(view.textObjects().first().tiltY==-30 && view.textObjects().first().surface==1,"text effects undo/redo");
 
     require(view.saveProject(), "save new fields");
     StereoViewWidget loaded;
@@ -116,10 +202,21 @@ int main(int argc, char **argv)
     require(loaded.loadProject(folder.path() + "/source.msk"), "reload new fields");
     require(loaded.textObjects().size() == 1 && loaded.pictureFrameSettings().shadowEnabled,
             "project keeps decorations");
+    require(loaded.textObjects().first().relief==2 && loaded.textObjects().first().tiltX==20,"project keeps text relief and tilt");
     const QString output = folder.path() + "/output.png";
     require(StereoViewWidget::saveComposedPair(output, view.exportEye(false), view.exportEye(true),
                                                0, 0, 0, Qt::transparent), "decorated PNG export");
     require(QImage(output).size() == source.size(), "export size");
+    const QImage exportLeft=QImage(output).copy(QRect(0,0,360,240)).convertToFormat(QImage::Format_ARGB32);
+    require(exportLeft==view.exportEye(false).convertToFormat(QImage::Format_ARGB32),"exported text effects match eye preview pixels");
+    auto coveringText=text;coveringText.foregroundCovers=true;view.setTextObjects({coveringText});
+    const auto beforeOcclusion=view.exportEye(false);
+    SelectionState coveredState;SelectionObject coverage;coverage.id="occlusion-cache";
+    coverage.raster=QImage(360,240,QImage::Format_ARGB32_Premultiplied);coverage.raster.fill(Qt::white);coveredState.objects.append(coverage);
+    view.restoreSelectionState(coveredState);
+    const auto coveredBase=view.exportEye(false,false);
+    const auto coveredText=view.exportEye(false);
+    require(coveredText==coveredBase && coveredText!=beforeOcclusion,"foreground changes invalidate applied text overlay cache");
     require(loaded.closeProject() && loaded.textObjects().isEmpty()
             && !loaded.pictureFrameSettings().shadowEnabled, "close clears decoration state");
     std::cout << "Shapes, curve splitting, shadow, text, undo, project and PNG export: PASS\n";

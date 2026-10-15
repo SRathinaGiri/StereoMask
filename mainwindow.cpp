@@ -2,6 +2,7 @@
 #include "stereowindowview.h"
 #include "updatechecker.h"
 #include "appversion.h"
+#include "operationprogress.h"
 #include <QShortcut>
 #include <QSettings>
 #include <QWidgetAction>
@@ -157,10 +158,10 @@ public:
         icon->setAlignment(Qt::AlignCenter);
         fLayout->addWidget(icon);
 
-        QLabel *text = new QLabel(tr("<h1>StereoMask v2.1.1</h1>"
+        QLabel *text = new QLabel(tr("<h1>StereoMask v%1</h1>"
                                      "<p align='center'><b>Stereomasken creator:</b> Bernd Paksa</p>"
                                      "<p align='center'><b>StereoMask Windows:</b> Subbiah Rathinagiri</p><p align='center'><b>Mac port &amp; editing improvements:</b> Theodore Whitten</p>"
-                                     "<p align='center'>Original app: <b>GEMINI CLI</b> and Qt6.<br>Mac improvements: <b>Codex</b> assistance.</p>"), frame);
+                                     "<p align='center'>Original app: <b>GEMINI CLI</b> and Qt6.<br>Mac improvements: <b>Codex</b> assistance.</p>").arg(STEREOMASK_VERSION), frame);
         text->setAlignment(Qt::AlignCenter);
         fLayout->addWidget(text);
         
@@ -243,6 +244,7 @@ void MainWindow::setupConnections()
     connect(m_exportWatcher, &QFutureWatcher<bool>::finished, this, [this](){
         QString fileName = m_exportWatcher->property("fileName").toString();
         bool exported = m_exportWatcher->result();
+        m_exportProgress.reset();
         if (exported) {
             statusBar()->showMessage(tr("Image exported to %1").arg(QFileInfo(fileName).fileName()), 5000);
         } else {
@@ -1269,7 +1271,7 @@ void MainWindow::checkForUpdates()
 void MainWindow::showAbout()
 {
     QMessageBox aboutBox(QMessageBox::Information, tr("About StereoMask"),
-        tr("<h2>StereoMask v2.1.1</h2>"
+        tr("<h2>StereoMask v%1</h2>"
            "<p>A precision masking tool for side-by-side stereo images.</p>"
            "<p><b>Original Stereomasken creator:</b> Bernd Paksa.</p>"
            "<p>StereoMask is inspired by his Stereomasken program and its creative "
@@ -1280,7 +1282,7 @@ void MainWindow::showAbout()
            "<p><b>Mac port &amp; editing improvements:</b> Theodore Whitten</p>"
            "<p>A collaborative effort. StereoMask's MIT license is preserved.</p>"
            "<p>Original app: <b>GEMINI CLI</b> and Qt6.<br>Mac improvements: <b>Codex</b> assistance.</p>"
-           "<p>Built for the stereo photography community.</p>"), QMessageBox::Ok, this);
+           "<p>Built for the stereo photography community.</p>").arg(STEREOMASK_VERSION), QMessageBox::Ok, this);
     aboutBox.setTextFormat(Qt::RichText);
     aboutBox.setTextInteractionFlags(Qt::TextBrowserInteraction);
     for (QLabel *label : aboutBox.findChildren<QLabel *>()) label->setOpenExternalLinks(true);
@@ -1357,6 +1359,7 @@ void MainWindow::saveProject()
     if (!m_viewWidget->isImageLoaded()) return;
     if (m_viewWidget->lassoClosed()) m_viewWidget->finishLasso();
     else if (m_viewWidget->hasLasso()) { statusBar()->showMessage(tr("Close or apply the unfinished outline before saving.")); return; }
+    OperationProgress progress(this,tr("StereoMask — Save project"),tr("Saving frame points, selections and project settings…"));
     if (m_viewWidget->saveProject()) {
         QFileInfo info(m_viewWidget->imagePath());
         QString mskPath = info.absolutePath() + "/" + info.completeBaseName() + ".msk";
@@ -1385,7 +1388,9 @@ void MainWindow::exportImage()
     QString defaultName = info.absolutePath() + "/" + info.completeBaseName() + "_masked.png";
     QString fileName = QFileDialog::getSaveFileName(this, tr("Export Masked Image"), defaultName, tr("Images (*.png *.jpg)"));
     if (!fileName.isEmpty()) {
+        m_exportProgress=std::make_unique<OperationProgress>(this,tr("StereoMask — Export image"),tr("Rendering the full-resolution left eye…"));
         QImage left = m_viewWidget->exportEye(false);
+        m_exportProgress->setStage(tr("Rendering the full-resolution right eye…"));
         QImage right = m_viewWidget->exportEye(true);
         QVector<MaskPoint> points = m_viewWidget->points();
         QColor maskColor = m_viewWidget->maskColor();
@@ -1401,10 +1406,11 @@ void MainWindow::exportImage()
         const int previewFeather=(!cutout || cutoutBackground==4) && m_viewWidget->previewFeatherEnabled() ? featherAmount : 0;
         QImage revealLeft = m_viewWidget->openingMask(false,previewFeather), revealRight = m_viewWidget->openingMask(true,previewFeather);
         if (cutout && cutoutBackground == 0 && !fileName.endsWith(".png", Qt::CaseInsensitive)) {
+            m_exportProgress.reset();
             QMessageBox::information(this, tr("Transparent export"), tr("Choose a PNG filename to preserve transparency."));
             return;
         }
-        statusBar()->showMessage(tr("Please wait... Exporting (0%)"));
+        m_exportProgress->setStage(tr("Encoding and writing the exported image…"));
         m_exportWatcher->setProperty("fileName", fileName);
         m_exportWatcher->setFuture(QtConcurrent::run([=]() {
             const QColor padding=(!cutout || cutoutBackground==4) ? bgColor : cutoutBackground==0 ? QColor(Qt::transparent) : cutoutBackground==1 ? QColor(Qt::black) : cutoutBackground==2 ? QColor(Qt::white) : cutoutColor;

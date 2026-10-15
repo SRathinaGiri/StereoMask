@@ -52,7 +52,7 @@ QString fixedKeys() {return QStringLiteral(
 "<tr><td>Ctrl + click a lasso anchor</td><td>Remove that anchor</td></tr>"
 "<tr><td>Shift + click a lasso edge</td><td>Insert an anchor</td></tr>"
 "<tr><td>Shift + drag a polygon</td><td>Constrain its movement horizontally</td></tr>"
-"<tr><td>Scroll wheel</td><td>Zoom toward the pointer</td></tr>"
+"<tr><td>Wheel / Shift + wheel / Ctrl + wheel</td><td>In frame-point and lasso editing: scroll vertically / horizontally / zoom toward the pointer. Other tools retain wheel zoom.</td></tr>"
 "<tr><td>Right-click a frame edge</td><td>Add a frame point</td></tr></table>"
 "<p>Ctrl, Alt, Windows and Shift are spelled out here. Context-sensitive editing gestures remain fixed to protect drawing and text entry.</p>");}
 }

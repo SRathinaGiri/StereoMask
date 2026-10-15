@@ -1,10 +1,10 @@
-# StereoMask v2.2.0
+# StereoMask v2.3.0
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-Download the packaged Windows build from the [v2.2.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.2.0); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.3.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.3.0); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
 
@@ -12,7 +12,7 @@ Download the packaged Windows build from the [v2.2.0 release](https://github.com
 - **Guided Process:** An optional step-by-step panel guides first-time users from opening an image through stereo-window setup, frame construction, foreground preservation, review, save and export without discarding existing work.
 - **History panel:** Applied foreground edits appear as ordered workflow objects with visibility, name, eye, Add/Subtract operation, point editing, movement, reordering and deletion. Undo/Redo continues to cover completed project edits.
 - **Creative frame tools:** Create editable rectangles, squares, circles and ovals; add flat, beveled or decorative picture-frame borders; and configure stereo-aware drop shadows.
-- **3D Text & Bubbles:** Add multiple stereo-positioned text objects, speech bubbles and thought bubbles with fonts, alignment, colors, opacity, depth, tails and optional foreground occlusion.
+- **3D Text & Bubbles:** Add multiple stereo-positioned text objects, speech bubbles and thought bubbles with fonts, alignment, colors, opacity, depth, tails and optional foreground occlusion. Text effects include Flat, Embossed and Engraved, on Colored Letters or a Cutout Plate with transparent glyph holes. Both eyes view one consistently rotated plane: X is top/bottom pitch (floor pose), Y is left/right yaw, and Z is clockwise/counterclockwise roll. X/Y perspective produces a stereo depth gradient without vertical misalignment. Stereo depth and relief depth remain separate controls. Effects persist in projects and appear in preview/export.
 - **Editable Windows shortcuts:** Help → Keyboard Shortcuts lists the effective bindings and lets users change or disable assignable commands while protecting fixed drawing gestures.
 - **Stereo Window adjustment:** Before tracing, shift the original eye images horizontally in the same full-resolution side-by-side layout as the main window, with an optional red/cyan anaglyph preview, pixel controls, zoom/pan and Push Back/Pull Forward buttons. Apply is undoable, saved in the project and used by preview/export without altering the source file.
 - **Frame editing:** Add, insert, move and multi-select frame points, set disparity/depth, align and transform points, and edit curves and handles. Directional alignment uses the selected leftmost/rightmost/topmost/bottommost point; depth alignment uses the selected median disparity.
@@ -26,7 +26,8 @@ Download the packaged Windows build from the [v2.2.0 release](https://github.com
 - **Anchor insertion/removal:** Shift-click an edge to insert, including closing/magnetic edges. Ctrl-click a point to remove it and reconnect neighbors. Closed polygons retain at least three points. Apply commits changes; Undo restores the previous polygon.
 - **Whole-polygon movement:** Select a visible polygon in the History panel and enable Move polygon (four-arrow icon). Drag its interior or edge to translate its shape and all anchors together. Shift-drag moves horizontally only; Escape cancels the drag. Each completed drag is undoable and does not move the former paired partner. The shape stays within its eye image; raster/imported groups are not moved by this polygon tool.
 - **Paired lasso:** The connected-circles toggle creates an estimated opposite-eye polygon on new Apply. Source-resolution OpenCV patch matching and disparity fallback assist alignment. Two independent objects remain afterward; inspect and adjust the copied outline.
-- **Aligned navigation:** Shared zoom/pan, pointer-centered wheel zoom, arrows to scroll, Shift+Arrow for larger steps, Space/Alt/middle-button drag to pan, Ctrl+0 fit and Ctrl+Plus/Minus zoom. Unfinished lassos are retained.
+- **Aligned navigation:** Shared zoom/pan. In frame-point and lasso editing, wheel scrolls vertically, Shift+wheel scrolls horizontally and Ctrl+wheel zooms toward the pointer. Other tools retain wheel zoom. Arrows scroll, Shift+Arrow takes larger steps, Space/Alt/middle-button drag pans, Ctrl+0 fits and Ctrl+Plus/Minus zooms. Unfinished lassos are retained.
+- **Operation feedback:** File opening, selection application, color selection, AutoMask, edge refinement, applying text/bubbles, project saving and export show an opaque frameless processing message and current-stage status messages. Single-eye and paired selection operations have distinct messages. Image decoding, paired polygon matching, opposite-eye tracing, color matching, selection-mask composition and applied text-layer rendering run in workers. Applied text layers are cached for subsequent preview/export. Unknown-duration stages do not show guessed percentages.
 - **Export-consistent preview:** Preview Result uses the same per-eye compositing as the selected export mode. Match preview uses mask color/opacity; solid cutouts use their chosen background. Transparent SBS preview uses a non-exported checkerboard. Composed eye images are cached.
 - **Clean Preview:** F8 hides editing marks, hints and cursors while retaining the selected export appearance. Zoom/pan remain available; turn it off to draw. It does not automatically apply unfinished work.
 - **Synced appearance:** Mask color and Pick mask color edit the same value as Settings. The swatch and opacity follow Settings and loaded projects. Sampling does not switch export mode or change custom cutout color.
@@ -75,10 +76,11 @@ Preview Feather softens the frame boundary in Match preview and its export when 
 | F8 | Toggle Clean Preview |
 | Arrow / Shift+Arrow | Scroll both eyes / scroll farther |
 | Ctrl+0 / Ctrl+Plus or Equals / Ctrl+Minus | Fit / zoom in / zoom out |
-| Wheel / Space-drag / Alt-drag / middle-button drag | Pointer zoom / aligned pan |
+| Wheel / Shift+wheel / Ctrl+wheel | In frame-point and lasso editing: vertical scroll / horizontal scroll / pointer-centered zoom. Other tools retain wheel zoom. |
+| Space-drag / Alt-drag / middle-button drag | Aligned pan |
 | P / S | Toggle Pan / frame-point Snap |
 | [ / ] | Smaller / larger brush |
-| Right-click in Edit frame | With fewer than three dots, append a frame point. Once the frame is closed, insert a point on the nearest frame edge. |
+| Right-click in Edit frame | Add corners in click order. Click within 10 screen pixels of an existing edge to insert a point there. The outline closes to the first corner. |
 | Ctrl-click frame dots / Shift-drag selected dots | Change multi-selection / adjust disparity |
 
 Lasso gestures apply to the pending outline or a polygon reopened with Edit points. Keep keyboard focus in the image. Clicking away from a closed outline can apply it and start another; Save/Export also apply closed pending outlines. Explicitly apply and save before quitting.
@@ -95,7 +97,8 @@ Canvas click-to-select applied polygons, selection groups and per-object feather
 
 - [Offline User Guide](docs/user-guide.html): workflows, tools, shortcuts and troubleshooting.
 - [Windows/Mac Comparison and Porting Checklist](docs/windows-mac-comparison.md): verified baseline, feature differences, source map, JSON compatibility and port order.
-- [Windows v2.2.0 to Mac R18 Handoff](docs/windows-to-mac-handoff.md): the smaller reciprocal feature delta Mac should consider adopting.
+- [Windows v2.3.0 to Mac R18 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [v2.3.0 Release Notes](docs/release-notes-v2.3.0.md): text effects, progress feedback, navigation and frame-point fixes.
 - [Mac Integration](docs/mac-integration.md): original import provenance.
 - [Credits](CREDITS.md): inspiration, collaborators and dependencies.
 
@@ -119,3 +122,5 @@ ctest --test-dir build --output-on-failure
 CMake uses the compatible OpenCV install at D:\vcpkg\installed\x64-mingw-dynamic when present; supply OpenCV_DIR for another install. Package the executable with Qt/MinGW/OpenCV DLLs, Qt plugins, README, credits, license, guide and dependency notices. Extract the complete ZIP, not only the executable. Help is also embedded in the app.
 
 Four CTest suites cover selection/geometry/export, creative tools, help/UI and update checking. Synthetic tests do not certify segmentation quality on every image or validate Mac packaging.
+
+The application version is defined in `appversion.h`. CMake reads it for project/bundle metadata, and runtime titles, About, splash and update checks use the same constant. Public release notes and `updates.json` describe the published release and are updated during release preparation.

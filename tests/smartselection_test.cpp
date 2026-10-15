@@ -122,7 +122,7 @@ int main(int argc,char **argv) {
     require(insertionView.loadImage(insertionFile),"frame insertion fixture load");insertionView.fitView();
     const QVector<QPointF> corners={{80,50},{160,50},{160,130},{80,130}};
     for(const auto &point:corners) insertionView.addPoint(point,0);
-    QMouseEvent addFramePoint(QEvent::MouseButtonPress,QPointF(140,100),QPointF(140,100),Qt::RightButton,Qt::RightButton,Qt::NoModifier);
+    QMouseEvent addFramePoint(QEvent::MouseButtonPress,QPointF(159,129),QPointF(159,129),Qt::RightButton,Qt::RightButton,Qt::NoModifier);
     QApplication::sendEvent(&insertionView,&addFramePoint);
     require(insertionView.points().size()==5 && insertionView.points()[0].pos==corners[0] &&
             insertionView.points()[2].pos==corners[1] && insertionView.points()[3].pos==corners[2] &&
@@ -130,6 +130,40 @@ int main(int argc,char **argv) {
     insertionView.undoStack()->undo();require(insertionView.points().size()==4,"frame insertion undo");
     insertionView.undoStack()->redo();require(insertionView.points().size()==5,"frame insertion redo");
     std::cout<<"Nearest-edge frame insertion preserves vertices/order and Undo/Redo: PASS\n";
+
+    StereoViewWidget drawnFrame;drawnFrame.setAutoSave(false);drawnFrame.resize(800,400);
+    require(drawnFrame.loadImage(insertionFile),"right-click frame fixture load");drawnFrame.fitView();
+    require(drawnFrame.points().isEmpty(),"fresh right-click frame must start empty");
+    auto rightClickFrame=[&](QPointF point) {
+        // At fit scale 1 the left image's pixel origin is (19,79).
+        const QPointF widgetPoint=point+QPointF(19,79);
+        QMouseEvent press(QEvent::MouseButtonPress,widgetPoint,widgetPoint,Qt::RightButton,Qt::RightButton,Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,widgetPoint,widgetPoint,Qt::RightButton,Qt::NoButton,Qt::NoModifier);
+        QApplication::sendEvent(&drawnFrame,&press);QApplication::sendEvent(&drawnFrame,&release);
+    };
+    for(const auto &point:corners) rightClickFrame(point);
+    require(drawnFrame.points().size()==4,"right-click frame point count");
+    for(int i=0;i<corners.size();++i) {
+        require(QLineF(drawnFrame.points()[i].pos,corners[i]).length()<0.01,"new frame must retain click order and close to first point");
+    }
+    rightClickFrame(QPointF(80,90));
+    require(drawnFrame.points().size()==5 && drawnFrame.points().first().pos==corners.first() &&
+            drawnFrame.points().last().pos==QPointF(80,90),"closing-edge insertion must preserve first vertex");
+    drawnFrame.undoStack()->undo();require(drawnFrame.points().size()==4 && drawnFrame.points().first().pos==corners.first(),"closing-edge insertion undo");
+    drawnFrame.undoStack()->redo();require(drawnFrame.points().size()==5 && drawnFrame.points().last().pos==QPointF(80,90),"closing-edge insertion redo");
+    std::cout<<"Right-click frame creation retains click order and closing-edge insertion retains first vertex: PASS\n";
+
+    border.replaceFramePoints(ellipse);
+    const auto closing=ellipse.last();
+    const QPointF closingMiddle=(closing.pos+closing.cp1*3+closing.cp2*3+ellipse.first().pos)/8;
+    border.addPoint(closingMiddle,10,ellipse.size());
+    require(border.points().size()==5 && border.points().first().pos==ellipse.first().pos && border.points().last().isCurve,"closing curve split keeps first vertex");
+    const QImage closingOpening=border.openingMask(false);int closingDifference=0;
+    for(int y=0;y<closingOpening.height();++y)for(int x=0;x<closingOpening.width();++x)
+        closingDifference+=qAbs(qAlpha(ellipseOpening.pixel(x,y))-qAlpha(closingOpening.pixel(x,y)));
+    require(closingDifference<600,"closing curve split preserves shape");
+    border.undoStack()->undo();require(border.points().size()==4,"closing curve split undo");
+    border.undoStack()->redo();require(border.points().size()==5,"closing curve split redo");
 
     const QImage image=fixture();const QImage seed=hints(image.size());const QRect region(30,12,170,156);
     QImage rough(image.size(),QImage::Format_ARGB32_Premultiplied);rough.fill(Qt::transparent);
@@ -241,10 +275,36 @@ int main(int argc,char **argv) {
     QMouseEvent panMove(QEvent::MouseMove,QPointF(230,220),QPointF(230,220),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(&view,&panMove);
     QMouseEvent panRelease(QEvent::MouseButtonRelease,QPointF(230,220),QPointF(230,220),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(&view,&panRelease);
     QKeyEvent spaceUp(QEvent::KeyRelease,Qt::Key_Space,Qt::NoModifier);QApplication::sendEvent(&view,&spaceUp);
-    QWheelEvent wheel(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&view,&wheel);
-    require(view.zoom()>1,"wheel did not zoom");require(view.hasLasso(),"pan/zoom discarded unfinished lasso");
+    const auto beforeWheelPan=view.panOffset();const auto beforeWheelZoom=view.zoom();
+    QWheelEvent scroll(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&view,&scroll);
+    require(view.zoom()==beforeWheelZoom && view.panOffset().x()==beforeWheelPan.x() && view.panOffset().y()>beforeWheelPan.y(),"ordinary lasso wheel must pan vertically without zoom");
+    QWheelEvent wheel(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,120),Qt::NoButton,Qt::ControlModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&view,&wheel);
+    require(view.zoom()>1,"Ctrl+wheel did not zoom");require(view.hasLasso(),"pan/zoom discarded unfinished lasso");
     view.fitView();require(view.zoom()==1 && view.hasLasso(),"Fit view lost outline");view.applyLasso();
     require(view.revealMask(false)==lasso,"pan/zoom changed lasso source geometry");
+    for(int mode:{0,7,8}) {
+        view.setBrushMode(mode);view.fitView();view.setZoom(2);
+        const auto frameBefore=view.points();const int undoBefore=view.undoStack()->index();
+        QWheelEvent down(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,-120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+        QApplication::sendEvent(&view,&down);
+        require(view.zoom()==2 && view.panOffset().x()==0 && view.panOffset().y()<0,"point-edit wheel down must scroll both eyes without zoom");
+        const auto afterDown=view.panOffset();
+        QWheelEvent smooth(QPointF(210,210),QPointF(210,210),QPoint(0,24),QPoint(),Qt::NoButton,Qt::NoModifier,Qt::ScrollUpdate,false);
+        QApplication::sendEvent(&view,&smooth);
+        require(view.zoom()==2 && view.panOffset().y()>afterDown.y(),"trackpad pixel scrolling must pan vertically");
+        const auto beforeHorizontal=view.panOffset();
+        QWheelEvent horizontal(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,-120),Qt::NoButton,Qt::ShiftModifier,Qt::NoScrollPhase,false);
+        QApplication::sendEvent(&view,&horizontal);
+        require(view.zoom()==2 && view.panOffset().x()<beforeHorizontal.x() && view.panOffset().y()==beforeHorizontal.y(),"Shift+wheel must scroll horizontally only");
+        QWheelEvent horizontalReverse(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(120,0),Qt::NoButton,Qt::ShiftModifier,Qt::NoScrollPhase,false);
+        QApplication::sendEvent(&view,&horizontalReverse);
+        require(QLineF(view.panOffset(),beforeHorizontal).length()<0.01,"native horizontal Shift+wheel must reverse horizontal scroll");
+        QWheelEvent zoomOut(QPointF(210,210),QPointF(210,210),QPoint(),QPoint(0,-120),Qt::NoButton,Qt::ControlModifier,Qt::NoScrollPhase,false);
+        QApplication::sendEvent(&view,&zoomOut);
+        require(view.zoom()<2 && view.undoStack()->index()==undoBefore && view.points().size()==frameBefore.size(),"Ctrl+wheel zoom out must not edit frame/history");
+        for(int i=0;i<frameBefore.size();++i)require(view.points()[i].pos==frameBefore[i].pos,"wheel changes frame geometry");
+    }
+    view.fitView();view.setBrushMode(7);
     view.clearPaintedReveal();require(view.revealMask(false).isNull() && view.revealMask(true).isNull(),"clear reveal failed");
     view.undoStack()->undo();require(view.revealMask(false)==lasso && view.revealMask(true)==otherEye,"clear reveal undo failed");
     // Multi-selection regression: closed first contour automatically commits on a new click.

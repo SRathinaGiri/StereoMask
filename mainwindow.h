@@ -7,11 +7,13 @@
 #include <QStringList>
 #include <QTimer>
 #include <QList>
+#include <memory>
 
 class StereoViewWidget;
 class QSpinBox;
 class QAction;
 class UpdateChecker;
+class OperationProgress;
 template <typename T> class QFutureWatcher;
 
 struct AppSettings {
@@ -82,6 +84,7 @@ private:
     UpdateChecker *m_updateChecker;
     QAction *m_checkUpdatesAction;
     QFutureWatcher<bool> *m_exportWatcher;
+    std::unique_ptr<OperationProgress> m_exportProgress;
     QList<QAction*> m_rotationActions;
 };
 

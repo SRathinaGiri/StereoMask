@@ -1,6 +1,9 @@
 #include <QBuffer>
 #include <QBitArray>
 #include "smartselection.h"
+#include "operationprogress.h"
+#include <QScopedValueRollback>
+#include <QScopeGuard>
 #include <QFutureWatcher>
 #include <QtConcurrent>
 #include <QKeyEvent>
@@ -661,7 +664,7 @@ QImage StereoViewWidget::exportEye(bool right, bool includeText) const {
         framePainter.drawImage(0,0,pictureFrameOverlay(image.size(),m_points,right,openingMask(right),m_pictureFrame));
     }
     if(includeText && !m_textObjects.isEmpty()) {
-        QPainter painter(&cached);painter.drawImage(0,0,textOverlay(image.size(),m_textObjects,right,revealMask(right)));
+        QPainter painter(&cached);painter.drawImage(0,0,cachedTextOverlay(right));
     }
     cachedKey=key;return cached;
 }
@@ -684,14 +687,15 @@ QImage StereoViewWidget::openingMask(bool right, int feather) const {
     painter.end(); return mask;
 }
 void StereoViewWidget::rebuildSelectionMasks() {
-    m_revealLeft=m_baseRevealLeft; m_revealRight=m_baseRevealRight;
-    m_completedLeft=m_baseOutlineLeft; m_completedRight=m_baseOutlineRight;
-    for (const auto &object:m_selectionObjects) {
+    auto state=selectionState();
+    const QSize size=m_processor.leftImage().size();
+    auto compose=[state,size]() mutable {
+    for (const auto &object:state.objects) {
         if (!object.visible) continue;
-        QImage &mask=object.right ? m_revealRight : m_revealLeft;
-        QPainterPath &outline=object.right ? m_completedRight : m_completedLeft;
+        QImage &mask=object.right ? state.baseRight : state.baseLeft;
+        QPainterPath &outline=object.right ? state.outlineRight : state.outlineLeft;
         if (mask.isNull()) {
-            mask=QImage(m_processor.leftImage().size(),QImage::Format_ARGB32_Premultiplied);
+            mask=QImage(size,QImage::Format_ARGB32_Premultiplied);
             mask.fill(Qt::transparent);
         }
         QPainter painter(&mask); painter.setRenderHint(QPainter::Antialiasing);
@@ -701,6 +705,11 @@ void StereoViewWidget::rebuildSelectionMasks() {
         painter.end();
         if (!object.path.isEmpty()) outline=object.subtract ? outline.subtracted(object.path) : outline.united(object.path);
     }
+    return state;
+    };
+    const auto composed=m_operationProgress ? m_operationProgress->run(compose) : compose();
+    m_revealLeft=composed.baseLeft;m_revealRight=composed.baseRight;
+    m_completedLeft=composed.outlineLeft;m_completedRight=composed.outlineRight;
     emit selectionObjectsChanged();
 }
 
@@ -780,11 +789,21 @@ QImage StereoViewWidget::colorSelectionMask(const QImage &image, const QPoint &s
 void StereoViewWidget::applyColorSelection(bool right,const QPoint &seed,bool contiguous)
 {
     if(m_refining || !m_processor.isValid())return;
+    QScopedValueRollback<bool> busy(m_refining,true);
+    emit smartBusy(true);
+    const auto finishBusy=qScopeGuard([this] { emit smartBusy(false); });
+    OperationProgress progress(this,tr("StereoMask — Color selection"),tr("Finding pixels matching the selected color…"));
+    QScopedValueRollback<OperationProgress *> activeProgress(m_operationProgress,&progress);
     const QImage source=right ? m_processor.rightImage() : m_processor.leftImage();
-    const QImage mask=colorSelectionMask(source,seed,m_colorSelectionTolerance,contiguous);
+    const int tolerance=m_colorSelectionTolerance;
+    const QImage mask=progress.run([source,seed,tolerance,contiguous] {return colorSelectionMask(source,seed,tolerance,contiguous);});
     if(mask.isNull())return;
-    int pixels=0;for(int y=0;y<mask.height();++y){const QRgb *row=reinterpret_cast<const QRgb *>(mask.constScanLine(y));for(int x=0;x<mask.width();++x)pixels+=qAlpha(row[x])!=0;}
+    const qint64 pixels=progress.run([mask] {
+        qint64 count=0;for(int y=0;y<mask.height();++y){const QRgb *row=reinterpret_cast<const QRgb *>(mask.constScanLine(y));for(int x=0;x<mask.width();++x)count+=qAlpha(row[x])!=0;}
+        return count;
+    });
     if(!pixels){emit smartStatus(tr("No pixels matched the selected color and tolerance."));return;}
+    progress.setStage(tr("Updating the ordered mask and saving the project…"));
     m_cutout=true;
     auto state=selectionState();SelectionObject object;
     object.id=QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -961,14 +980,17 @@ void StereoViewWidget::findEdges() {
     const QImage hints = right ? m_smartHintsRight : m_smartHintsLeft;
     const QImage before = revealMask(right);
     const int revision = m_smartRevision;
+    auto progress=std::make_shared<OperationProgress>(this,tr("StereoMask — Find edges"),tr("Refining the selected edges with OpenCV…"));
     m_refining = true; emit smartBusy(true);
     emit smartStatus(tr("Finding edges in the active box…"));
     auto watcher = new QFutureWatcher<SmartSelectionResult>(this);
-    connect(watcher, &QFutureWatcher<SmartSelectionResult>::finished, this, [this, watcher, right, region, before, revision, source] {
+    connect(watcher, &QFutureWatcher<SmartSelectionResult>::finished, this, [this, watcher, right, region, before, revision, source, progress] {
         const SmartSelectionResult result = watcher->result(); watcher->deleteLater();
         m_refining = false; emit smartBusy(false);
         if (revision != m_smartRevision) { emit smartStatus(tr("Selection changed during processing; result discarded. Click Find edges again.")); return; }
         if (!result.error.isEmpty() || result.mask.isNull()) { emit smartStatus(result.error.isEmpty() ? tr("No edge selection was produced.") : result.error); return; }
+        progress->setStage(tr("Updating the refined mask and saving the project…"));
+        QScopedValueRollback<OperationProgress *> activeProgress(m_operationProgress,progress.get());
         QImage after = before;
         if (after.isNull()) { after = QImage(source.size(), QImage::Format_ARGB32_Premultiplied); after.fill(Qt::transparent); }
         QPainter p(&after); p.setCompositionMode(QPainter::CompositionMode_Source);
@@ -1158,8 +1180,22 @@ bool StereoViewWidget::loadImage(const QString &fileName)
 {
     m_lastError = QString();
     if (m_refining) { m_lastError=tr("Wait for Find edges to finish before opening another image."); return false; }
+    std::unique_ptr<OperationProgress> opening;
+    if (!m_operationProgress) opening=std::make_unique<OperationProgress>(this,tr("StereoMask - Open file"),tr("Opening image: %1").arg(QFileInfo(fileName).fileName()));
+    QScopedValueRollback<OperationProgress *> activeProgress(m_operationProgress,opening ? opening.get() : m_operationProgress);
+    m_operationProgress->setStage(tr("Opening image: %1").arg(QFileInfo(fileName).fileName()));
     cancelLasso();
-    if (m_processor.loadSideBySide(fileName)) {
+    const auto loaded=[&] {
+        QScopedValueRollback<bool> loading(m_refining,true);
+        return m_operationProgress->run([fileName] {
+        StereoImageProcessor processor;
+        const bool success=processor.loadSideBySide(fileName);
+        return std::make_pair(success,processor);
+        });
+    }();
+    if (loaded.first) {
+        m_processor=loaded.second;
+        m_operationProgress->setStage(tr("Restoring image settings and selections…"));
         m_textObjects.clear();m_pictureFrame=PictureFrameSettings{};
         m_selectionObjects.clear(); m_baseRevealLeft=QImage(); m_baseRevealRight=QImage();
         m_baseOutlineLeft=QPainterPath(); m_baseOutlineRight=QPainterPath();
@@ -1212,7 +1248,7 @@ bool StereoViewWidget::loadImage(const QString &fileName)
         update();
         return true;
     }
-    m_lastError = m_processor.lastError();
+    m_lastError = loaded.second.lastError();
     return false;
 }
 
@@ -1282,6 +1318,10 @@ bool StereoViewWidget::loadProject(const QString &path)
     if (info.suffix().toLower() != "msk") {
         return loadImage(path);
     }
+
+    std::unique_ptr<OperationProgress> opening;
+    if (!m_operationProgress) opening=std::make_unique<OperationProgress>(this,tr("StereoMask - Open file"),tr("Opening project: %1").arg(info.fileName()));
+    QScopedValueRollback<OperationProgress *> activeProgress(m_operationProgress,opening ? opening.get() : m_operationProgress);
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -1594,6 +1634,8 @@ bool StereoViewWidget::createAutoMaskPoints()
 bool StereoViewWidget::createAutoMaskPoints(AutoMaskMode mode)
 {
     if (!canAutoMask()) return false;
+    QScopedValueRollback<bool> busy(m_refining,true);
+    OperationProgress progress(this,tr("StereoMask — AutoMask"),tr("Analyzing stereo overlap and disparity…"));
     if (m_autoMaskDebugTimer) m_autoMaskDebugTimer->stop();
     m_autoMaskDebugFrames.clear();
     m_pendingAutoMaskPoints.clear();
@@ -1607,9 +1649,10 @@ bool StereoViewWidget::createAutoMaskPoints(AutoMaskMode mode)
     if (mode == AutoMaskRectDecompose || mode == AutoMaskContour) {
         CvAutoMaskResult cvMask;
         try {
-            cvMask = (mode == AutoMaskRectDecompose)
-                ? computeCvAutoMask(m_processor.leftImage(), m_processor.rightImage())
-                : computeCvContourAutoMask(m_processor.leftImage(), m_processor.rightImage());
+            const QImage left=m_processor.leftImage(),right=m_processor.rightImage();
+            cvMask = progress.run([left,right,mode] {
+                return mode == AutoMaskRectDecompose ? computeCvAutoMask(left,right) : computeCvContourAutoMask(left,right);
+            });
         } catch (const cv::Exception &e) {
             qWarning() << "OpenCV auto mask failed:" << e.what();
         }
@@ -1636,6 +1679,7 @@ bool StereoViewWidget::createAutoMaskPoints(AutoMaskMode mode)
         }
 
         if (autoPoints.size() >= 3) {
+            progress.setStage(tr("Creating editable frame points and saving the project…"));
             m_selectedIndices.clear();
             m_selectedPointIndex = -1;
             m_undoStack->push(new InsertPointsCommand(this, indices, autoPoints,
@@ -1883,9 +1927,9 @@ void StereoViewWidget::drawAutoMaskDebugOverlay(QPainter &painter, const QRect &
 
 void StereoViewWidget::addPoint(const QPointF &pos, float disparity, int index)
 {
-    if(index>=0 && index<m_points.size() && m_points.size()>=3) {
+    if(index>=0 && index<=m_points.size() && m_points.size()>=3) {
         const int previous=(index+m_points.size()-1)%m_points.size();
-        const auto a=m_points[previous],b=m_points[index];
+        const auto a=m_points[previous],b=m_points[index % m_points.size()];
         if(a.isCurve) {
             auto mix=[](QPointF a,QPointF b,double t){return a*(1-t)+b*t;};
             double best=0.5,distance=std::numeric_limits<double>::max();
@@ -2169,7 +2213,7 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
         } else {
             painter.drawImage(target,img);
             if(!m_anaglyphMode && !m_textObjects.isEmpty())
-                painter.drawImage(target,textOverlay(img.size(),m_textObjects,isRight,revealMask(isRight)));
+                painter.drawImage(target,cachedTextOverlay(isRight));
         }
         if (m_cleanPreviewEnabled) { painter.restore(); return; }
         const QImage reveal = revealMask(isRight);
@@ -2530,10 +2574,9 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
             
             // Check if we clicked on an edge to insert
             int insertIdx = -1;
-            // Once a frame is closed, always insert on its nearest sampled edge.
-            // This preserves vertex order and avoids appending a crossing segment.
-            float minEdgeDist = m_points.count() >= 3 ? std::numeric_limits<float>::max() : 10.0f;
-            for (int i=0; i<m_points.count(); ++i) {
+            // Extend the outline unless the click is close to an existing edge.
+            float minEdgeDist = 10.0f;
+            for (int i=0; m_points.count() >= 3 && i<m_points.count(); ++i) {
                 int nextIdx = (i + 1) % m_points.count();
                 const auto &p1 = m_points[i];
                 const auto &p2 = m_points[nextIdx];
@@ -2564,6 +2607,8 @@ void StereoViewWidget::mousePressEvent(QMouseEvent *event)
                 }
             }
 
+            // Inserting on the closing edge must not rotate the first vertex.
+            if (insertIdx == 0) insertIdx = m_points.count();
             addPoint(imgPos, d, insertIdx);
             int newIdx = (insertIdx == -1) ? m_points.count()-1 : insertIdx;
             m_selectedPointIndex = newIdx; m_selectedIndices.clear(); m_selectedIndices << m_selectedPointIndex; m_hitType = HitPoint;
@@ -2819,16 +2864,32 @@ void StereoViewWidget::mouseReleaseEvent(QMouseEvent *event)
 void StereoViewWidget::wheelEvent(QWheelEvent *event) 
 { 
     if (m_draggingPolygon) {event->accept();return;}
+    if (!m_processor.isValid()) {event->ignore();return;}
     QRect vL, vR; float oldScale; calculateLayout(vL, vR, oldScale);
+    const bool editingPoints = m_brushMode == 0 || m_brushMode == 7 || m_brushMode == 8;
+    if (editingPoints && !(event->modifiers() & Qt::ControlModifier)) {
+        const bool horizontal = event->modifiers() & Qt::ShiftModifier;
+        const QPoint delta = !event->pixelDelta().isNull() ? event->pixelDelta() : event->angleDelta();
+        const float pixels = (horizontal && delta.y() == 0 ? delta.x() : delta.y())
+            * (!event->pixelDelta().isNull() ? 1.0f : 48.0f / 120.0f);
+        if (horizontal) m_panOffset.rx() += pixels / oldScale;
+        else m_panOffset.ry() += pixels / oldScale;
+        update();
+        event->accept();
+        return;
+    }
+    const int delta = !event->angleDelta().isNull() ? event->angleDelta().y() : event->pixelDelta().y();
+    if (!delta) {event->accept();return;}
     QPoint pos = event->position().toPoint();
     QRect targetV = vL.contains(pos) ? vL : (vR.contains(pos) ? vR : QRect());
     if (targetV.isNull()) {
-        setZoom(m_zoom * (event->angleDelta().y() > 0 ? 1.1f : 0.9f));
+        setZoom(m_zoom * (delta > 0 ? 1.1f : 0.9f));
+        event->accept();
         return;
     }
 
     QPointF imgPos = widgetToImage(pos, targetV, oldScale);
-    float factor = (event->angleDelta().y() > 0 ? 1.1f : 0.9f);
+    float factor = (delta > 0 ? 1.1f : 0.9f);
     m_zoom = qBound(0.1f, m_zoom * factor, 20.0f);
     
     float newScale; calculateLayout(vL, vR, newScale);
@@ -2837,6 +2898,7 @@ void StereoViewWidget::wheelEvent(QWheelEvent *event)
     m_panOffset.setX((pos.x() - targetV.center().x()) / newScale + iw/2.0 - imgPos.x());
     m_panOffset.setY((pos.y() - targetV.center().y()) / newScale + ih/2.0 - imgPos.y());
     update();
+    event->accept();
 }
 
 void StereoViewWidget::setSelectedPointDisparity(int disparity) 
@@ -2981,6 +3043,11 @@ void StereoViewWidget::closeLasso() {
 }
 void StereoViewWidget::applyLasso(bool erase) {
     if (m_refining || !m_processor.isValid() || m_lassoAnchors.size()<3) return;
+    QScopedValueRollback<bool> busy(m_refining,true);
+    emit smartBusy(true);
+    const auto finishBusy=qScopeGuard([this] { emit smartBusy(false); });
+    OperationProgress progress(this,tr("StereoMask — Apply selection"),tr("Closing the selection outline…"));
+    QScopedValueRollback<OperationProgress *> activeProgress(m_operationProgress,&progress);
     if (!m_lassoClosed) closeLasso();
     QPainterPath path; path.moveTo(m_lassoAnchors.first());
     for (const auto &segment:m_lassoSegments) for (const auto &p:segment) path.lineTo(p);
@@ -3007,20 +3074,32 @@ void StereoViewWidget::applyLasso(bool erase) {
         const double disparity=disparities.isEmpty() ? 0 : disparities[disparities.size()/2];
         const QImage source=object.right ? m_processor.rightImage() : m_processor.leftImage();
         const QImage opposite=object.right ? m_processor.leftImage() : m_processor.rightImage();
+        progress.setStage(tr("Matching the polygon in the opposite eye and tracing its edges…"));
+        const int brushMode=m_brushMode;
+        const auto pairedResult=progress.run([source,opposite,object,disparity,brushMode] {
         const auto alignment=alignStereoPolygon(source,opposite,object.anchors,object.right ? disparity : -disparity);
         SelectionObject copy=object;
         copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.right=!object.right;
-        copy.name=tr("Polygon %1").arg(state.objects.size()+1); copy.anchors=alignment.anchors;
-        matchedAnchors=alignment.matchedAnchors;
+        copy.anchors=alignment.anchors;
         copy.path=QPainterPath(); copy.path.moveTo(copy.anchors.first());
         for (int i=0; i<copy.anchors.size(); ++i) {
             const QPointF a=copy.anchors[i],b=copy.anchors[(i+1)%copy.anchors.size()];
-            const bool magnetic=i<copy.magnetic.size() ? copy.magnetic[i] : m_brushMode==8;
+            const bool magnetic=i<copy.magnetic.size() ? copy.magnetic[i] : brushMode==8;
             if (magnetic) for (const auto &point:magneticLassoPath(opposite,a,b)) copy.path.lineTo(point);
             else copy.path.lineTo(b);
         }
-        copy.path.closeSubpath(); state.objects.append(copy);
+        copy.path.closeSubpath();
+        return std::make_pair(copy,alignment.matchedAnchors);
+        });
+        SelectionObject copy=pairedResult.first;
+        copy.name=tr("Polygon %1").arg(state.objects.size()+1);
+        matchedAnchors=pairedResult.second;
+        state.objects.append(copy);
     }
+    QString applyStage=paired ? tr("Applying paired selections…")
+        : object.right ? tr("Applying selection to the right eye…") : tr("Applying selection to the left eye…");
+    if (m_autoSave) applyStage+=tr(" Saving project…");
+    progress.setStage(applyStage);
     m_undoStack->push(new SelectionObjectsCommand(this,state,replaced ? tr("Edit polygon selection") : paired ? tr("Add paired polygon selections") : tr("Add polygon selection")));
     cancelLasso(); setFocus();
     emit smartStatus(paired ? tr("Two independent polygons created (%1/%2 anchors matched). Check the opposite eye and adjust with Edit points.").arg(matchedAnchors).arg(object.anchors.size())
@@ -3190,4 +3269,37 @@ public:
 };
 }
 void StereoViewWidget::setTextObjects(const QVector<StereoText> &texts){if(isImageLoaded())m_undoStack->push(new TextObjectsCommand(this,texts.mid(0,100)));}
-void StereoViewWidget::applyTextObjects(const QVector<StereoText> &texts){m_textObjects=texts;m_exportKeyLeft.clear();m_exportKeyRight.clear();updateAnaglyphIfActive();update();if(m_autoSave)saveProject();}
+QByteArray StereoViewWidget::textOverlayKey(bool right) const {
+    QByteArray key;QDataStream stream(&key,QIODevice::WriteOnly);
+    stream<<(right ? m_processor.rightImage().cacheKey() : m_processor.leftImage().cacheKey())<<revealMask(right).cacheKey();
+    for(const auto &text:m_textObjects)stream<<QJsonDocument(textToJson(text)).toJson(QJsonDocument::Compact);
+    return key;
+}
+
+QImage StereoViewWidget::cachedTextOverlay(bool right) const {
+    if(m_textObjects.isEmpty())return {};
+    const QByteArray key=textOverlayKey(right);
+    auto &cachedKey=right ? m_textKeyRight : m_textKeyLeft;
+    auto &cached=right ? m_textCacheRight : m_textCacheLeft;
+    if(cachedKey!=key){cached=textOverlay(m_processor.leftImage().size(),m_textObjects,right,revealMask(right));cachedKey=key;}
+    return cached;
+}
+
+void StereoViewWidget::applyTextObjects(const QVector<StereoText> &texts) {
+    QScopedValueRollback<bool> busy(m_refining,true);
+    OperationProgress progress(this,tr("StereoMask - Apply text and bubbles"),tr("Rendering text and bubbles for the left eye…"));
+    const QSize size=m_processor.leftImage().size();
+    const QImage leftForeground=revealMask(false),rightForeground=revealMask(true);
+    const QImage left=progress.run([size,texts,leftForeground] {return texts.isEmpty() ? QImage() : textOverlay(size,texts,false,leftForeground);});
+    progress.setStage(tr("Rendering text and bubbles for the right eye…"));
+    const QImage right=progress.run([size,texts,rightForeground] {return texts.isEmpty() ? QImage() : textOverlay(size,texts,true,rightForeground);});
+    m_textObjects=texts;
+    m_textCacheLeft=left;m_textCacheRight=right;
+    m_textKeyLeft=textOverlayKey(false);m_textKeyRight=textOverlayKey(true);
+    m_exportKeyLeft.clear();m_exportKeyRight.clear();
+    progress.setStage(tr("Updating the text and bubbles preview…"));
+    exportEye(false);exportEye(true);updateAnaglyphIfActive();
+    if(m_autoSave){progress.setStage(tr("Saving text and bubbles in the project…"));saveProject();}
+    update();
+    emit smartStatus(tr("Text and bubbles updated. Undo restores the previous text objects."));
+}
