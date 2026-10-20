@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 # appversion.h is the single source of the current application version.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/appversion.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/appversion.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/user-guide.html")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/appversion.h" version_declaration
     REGEX "^inline constexpr const char \\*STEREOMASK_VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+\";")
 if(NOT version_declaration)
@@ -9,6 +11,13 @@ if(NOT version_declaration)
 endif()
 string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" app_version "${version_declaration}")
 project(StereoMask VERSION ${app_version} LANGUAGES CXX)
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/docs/user-guide.html" user_guide)
+string(REPLACE "<!--STEREOMASK_VERSION-->" " &middot; ${app_version}" user_guide "${user_guide}")
+set(STEREOMASK_GUIDE_PATH "${CMAKE_CURRENT_BINARY_DIR}/generated/docs/user-guide.html")
+file(GENERATE OUTPUT "${STEREOMASK_GUIDE_PATH}" CONTENT "${user_guide}")
+set(STEREOMASK_RESOURCE_FILE "${CMAKE_CURRENT_BINARY_DIR}/generated/resources.qrc")
+configure_file(resources.qrc.in "${STEREOMASK_RESOURCE_FILE}" @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,7 +69,7 @@ add_executable(StereoMask
     stereoimageprocessor.h
     undocommand.cpp
     undocommand.h
-    resources.qrc
+    "${STEREOMASK_RESOURCE_FILE}"
 )
 
 if(WIN32)
@@ -126,7 +135,7 @@ if(STEREOMASK_BUILD_TESTS)
     set_tests_properties(smart-selection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(StereoMaskHelpTest tests/help_test.cpp mainwindow.cpp mainwindow.h quickaccess.cpp quickaccess.h creativetools.cpp guidedprocess.cpp keyboardshortcuts.cpp decorations.cpp updatechecker.cpp updatechecker.h
         smartselection.cpp stereoviewwidget.cpp stereoviewwidget.h
-        stereoimageprocessor.cpp undocommand.cpp undocommand.h resources.qrc)
+        stereoimageprocessor.cpp undocommand.cpp undocommand.h "${STEREOMASK_RESOURCE_FILE}")
     target_include_directories(StereoMaskHelpTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(StereoMaskHelpTest PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Concurrent Qt6::Network ${OpenCV_LIBS})
     add_test(NAME user-guide COMMAND StereoMaskHelpTest)

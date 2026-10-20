@@ -1,6 +1,6 @@
 {
-  "version": "2.4.0",
-  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.0",
+  "version": "2.4.1",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.1",
   "package_type": "app",
-  "notes": "Windows v2.4.0 adds compact left-side toolbox drawers and persistent, reorderable Quick Access favorites, with borderless controls and full-width dropdowns. It includes processing-panel lifetime, project-loading and text-cache safety fixes reviewed from Mac R19. Windows fuzzy selection retains diagonal connectivity. See the release notes and updated Mac handoff."
+  "notes": "Windows v2.4.1 makes appversion.h the single source for the window title, startup banner, About, update checking and generated User Guide. Help uses a version-specific browser cache path to avoid older help pages. Includes all v2.4.0 toolbox, Quick Access and safety improvements."
 }

@@ -121,6 +121,18 @@ int main(int argc, char **argv) {
     BrowserCapture browser;
     QDesktopServices::setUrlHandler("file", &browser, "open");
     MainWindow window;
+    if(window.windowTitle()!=QStringLiteral("StereoMask v%1").arg(STEREOMASK_VERSION))return 67;
+    {
+        QEventLoop wait;
+        QTimer::singleShot(250,&wait,&QEventLoop::quit);wait.exec();
+        bool currentSplash=false;
+        for(auto topLevel:QApplication::topLevelWidgets())if(topLevel->objectName()=="startupSplash") {
+            auto label=topLevel->findChild<QLabel *>("startupVersionLabel");
+            currentSplash=label && label->text().contains(QStringLiteral("<h1>StereoMask v%1</h1>").arg(STEREOMASK_VERSION));
+            topLevel->close();
+        }
+        if(!currentSplash){std::cerr<<"Startup banner does not use the application version\n";return 67;}
+    }
     QAction *guide = nullptr;
     bool updates = false;
     for (QAction *menuAction : window.menuBar()->actions()) {
@@ -136,6 +148,10 @@ int main(int argc, char **argv) {
     QFile bundled(":/docs/user-guide.html");
     if (!browser.url.isLocalFile() || !file.open(QIODevice::ReadOnly) || !bundled.open(QIODevice::ReadOnly)) return 2;
     const QByteArray html = file.readAll();
+    if(!html.contains(QByteArray("W I N D O W S &middot; ")+STEREOMASK_VERSION) || html.contains("<!--STEREOMASK_VERSION-->")
+        || !browser.url.toLocalFile().contains(QStringLiteral("/help/%1/").arg(STEREOMASK_VERSION))) {
+        std::cerr<<"Help content/cache does not use the application version\n";return 67;
+    }
     if (html != bundled.readAll() || !html.contains("Subbiah Rathinagiri") || !html.contains("Select Brush") || !html.contains("Tutorial 2")) return 3;
     for (const QByteArray &feature: {QByteArray("Stereo Window"),QByteArray("Reset to original"),QByteArray("Smart polygon lasso"),QByteArray("Paired polygon selections"),QByteArray("History"),QByteArray("Guided Process"),QByteArray("Keyboard Shortcuts"),QByteArray("Ctrl + Enter"),QByteArray("Ctrl-click lasso anchor"),QByteArray("Shift-click lasso edge"),QByteArray("F8"),QByteArray("Match preview"),QByteArray("Padding/gap color"),QByteArray("QTAGENT Rect Decompose"),QByteArray("Bernd Paksa")})
         if (!html.contains(feature)) {std::cerr<<"Guide lacks current feature: "<<feature.constData()<<'\n';return 3;}

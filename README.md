@@ -1,10 +1,10 @@
-# StereoMask v2.4.0
+# StereoMask v2.4.1
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-Download the packaged Windows build from the [v2.4.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.0); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.4.1 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.1); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
 
@@ -99,7 +99,8 @@ Canvas click-to-select applied polygons, selection groups and per-object feather
 
 - [Offline User Guide](docs/user-guide.html): workflows, tools, shortcuts and troubleshooting.
 - [Windows/Mac Comparison and Porting Checklist](docs/windows-mac-comparison.md): verified baseline, feature differences, source map, JSON compatibility and port order.
-- [Windows v2.4.0 to Mac R20 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [Windows v2.4.1 to Mac R20 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [v2.4.1 Release Notes](docs/release-notes-v2.4.1.md): shared application/help version and version-specific help cache.
 - [v2.4.0 Release Notes](docs/release-notes-v2.4.0.md): toolbox drawers, Quick Access and Mac-reviewed safety fixes.
 - [v2.3.0 Release Notes](docs/release-notes-v2.3.0.md): previous text effects, progress feedback, navigation and frame-point fixes.
 - [Mac Integration](docs/mac-integration.md): original import provenance.
@@ -126,4 +127,4 @@ CMake uses the compatible OpenCV install at D:\vcpkg\installed\x64-mingw-dynamic
 
 Five CTest suites cover selection/geometry/export, creative tools, help/UI, update checking and Quick Access. Synthetic tests do not certify segmentation quality on every image or validate Mac packaging.
 
-The application version is defined in `appversion.h`. CMake reads it for project/bundle metadata, and runtime titles, About, splash and update checks use the same constant. Public release notes and `updates.json` describe the published release and are updated during release preparation.
+The application version is defined only in `appversion.h`. CMake reads it for project/bundle metadata and generates the versioned User Guide at `build/generated/docs/user-guide.html`; package that generated guide, not the version-neutral source HTML. Window titles, About, the startup banner and update checks use the same constant. In-app help opens a separate version-specific cache path to avoid reusing older browser help. Changing the header and rebuilding updates all of these displays. Public release notes and `updates.json` remain publication metadata and are updated during release preparation.

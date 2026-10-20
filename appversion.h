@@ -1,5 +1,5 @@
 #ifndef APPVERSION_H
 #define APPVERSION_H
 // Change the application version here; CMake and all runtime displays use it.
-inline constexpr const char *STEREOMASK_VERSION = "2.4.0";
+inline constexpr const char *STEREOMASK_VERSION = "2.4.1";
 #endif

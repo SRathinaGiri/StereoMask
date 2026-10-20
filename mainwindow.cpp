@@ -137,6 +137,7 @@ void AppSettings::addRecentFile(const QString &path)
 class StartupSplash : public QWidget {
 public:
     StartupSplash(QWidget *parent) : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint) {
+        setObjectName("startupSplash");
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_DeleteOnClose);
         QVBoxLayout *layout = new QVBoxLayout(this);
@@ -166,6 +167,7 @@ public:
                                      "<p align='center'><b>StereoMask Windows:</b> Subbiah Rathinagiri</p><p align='center'><b>Mac port &amp; editing improvements:</b> Theodore Whitten</p>"
                                      "<p align='center'>Original app: <b>GEMINI CLI</b> and Qt6.<br>Mac improvements: <b>Codex</b> assistance.</p>").arg(STEREOMASK_VERSION), frame);
         text->setAlignment(Qt::AlignCenter);
+        text->setObjectName("startupVersionLabel");
         fLayout->addWidget(text);
         
         layout->addWidget(frame);
@@ -221,7 +223,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     statusBar()->showMessage(tr("Ready"));
 
-    setWindowTitle(tr("StereoMask"));
+    setWindowTitle(tr("StereoMask v%1").arg(STEREOMASK_VERSION));
     resize(1200, 800);
 
     setupConnections();
@@ -1396,7 +1398,8 @@ void MainWindow::showSettings()
 void MainWindow::showHelp()
 {
     QFile source(":/docs/user-guide.html");
-    const QString folder = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/help/r10";
+    const QString folder = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+        + QStringLiteral("/help/%1").arg(STEREOMASK_VERSION);
     if (!QDir().mkpath(folder) || !source.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("User Guide"), tr("Could not prepare the user guide."));
         return;

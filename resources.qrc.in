@@ -1,0 +1,6 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource>
+    <file alias="app_icon.svg">@CMAKE_CURRENT_SOURCE_DIR@/app_icon.svg</file>
+    <file alias="docs/user-guide.html">@STEREOMASK_GUIDE_PATH@</file>
+</qresource>
+</RCC>

@@ -1,10 +1,10 @@
-# Windows v2.4.0 to Mac R20 Handoff
+# Windows v2.4.1 to Mac R20 Handoff
 
 ## Verified Baselines
 
 Compared on **2026-10-20** against fetched Mac `origin/main`: **R20 / 2.3.1**, commit [425f403755e8085973a58ef95052188ceef60017](https://github.com/TedInVR/StereoMask-Mac/commit/425f403755e8085973a58ef95052188ceef60017). R19 is [4003062b4e164d800f00aba4ba9d74f40f7d3f07](https://github.com/TedInVR/StereoMask-Mac/commit/4003062b4e164d800f00aba4ba9d74f40f7d3f07). The Mac checkout was not modified; only remote references were fetched. No Mac build, signing or Finder-launch validation was performed.
 
-Windows source: [v2.4.0](https://github.com/SRathinaGiri/StereoMask/tree/v2.4.0). Its release includes a Windows package and a Mac Handoff ZIP with this guide, release notes, changed source files, and the Windows v2.3.0-to-v2.4.0 patch. This is a review aid, not a patch to apply blindly over Mac-specific files.
+Windows source: [v2.4.1](https://github.com/SRathinaGiri/StereoMask/tree/v2.4.1). Its release includes a Windows package and a Mac Handoff ZIP with this guide, release notes, changed source files, and the Windows v2.3.0-to-v2.4.1 patch. This is a review aid, not a patch to apply blindly over Mac-specific files.
 
 The [previous v2.3.0 handoff](https://github.com/SRathinaGiri/StereoMask/blob/v2.3.0/docs/windows-to-mac-handoff.md) remains historical. Mac R19 has now integrated its principal Windows color-selection, alignment, frame-ordering, text-relief/tilt, processing-feedback and version-constant additions. Do not describe those as still missing from Mac R20.
 
@@ -41,6 +41,12 @@ Selection-tool and AutoMask menu choices are registered too. AutoMask's widget b
 
 quickAccess/commands in layout.ini stores the ordered IDs. Favorites are per-user application preferences, not .msk fields. Native Mac menus, shortcuts, updater URLs, signing and deployment should remain Mac-specific. Confirm right-click/Control-click behavior separately from polygon anchor gestures on the canvas.
 
+### 3. Shared application/help version (v2.4.1)
+
+appversion.h supplies the runtime version and CMake project metadata. The User Guide source now has a version placeholder rather than a hardcoded number. CMake generates build/generated/docs/user-guide.html and configures resources.qrc.in into the build directory, retaining the existing resource aliases. Embed and package the generated guide. Changes to either the header or source guide trigger regeneration. The app opens help under help/<version>/user-guide.html instead of the shared help/r10 URL.
+
+MainWindow sets its versioned title from the constant. Tests inspect the actual splash label, title, About, embedded HTML and cache URL. Mac should preserve its own revision label and platform-specific cache location while using its appversion.h for numeric version text. Publication metadata such as historical release notes and updater URLs remains separate from runtime version displays.
+
 ## Source Map
 
 | File | Responsibility |
@@ -51,6 +57,7 @@ quickAccess/commands in layout.ini stores the ordered IDs. Favorites are per-use
 | operationprogress.h | Reviewed lifetime/reentry fix; Mac R19 already has the corresponding implementation |
 | stereoviewwidget.cpp | Reviewed malformed-text and cache-cleanup fixes; preserve Windows diagonal connectivity |
 | appversion.h, updates.json | Windows runtime version and publication metadata; retain Mac's own destinations |
+| resources.qrc.in, main.cpp, CMakeLists.txt | Generated help/resource version and centralized window-title setup |
 | tests/help_test.cpp | Real drawer/command wiring, layout round-trip, widths, live favorite states, processing lifetime |
 | tests/quickaccess_test.cpp | Duplicate/unknown IDs, original-action execution/state, ordering, context removal, manager Save/Cancel and persistence |
 | tests/creative_test.cpp | Malformed project entries, replacement-image text state and diagonal Fuzzy convention |
