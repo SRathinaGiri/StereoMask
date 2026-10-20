@@ -2,6 +2,7 @@
 #define OPERATIONPROGRESS_H
 
 #include <QApplication>
+#include <QPointer>
 #include <QEventLoop>
 #include <QFutureWatcher>
 #include <QMainWindow>
@@ -42,51 +43,53 @@ protected:
 class OperationProgress {
 public:
     OperationProgress(QWidget *parent, const QString &title, const QString &stage)
-        : dialog(parent->window()), label(&dialog),
+        : dialog(new OperationMessagePanel(parent->window())), label(new QLabel(dialog)),
           window(qobject_cast<QMainWindow *>(parent->window())) {
-        dialog.setObjectName("operationProgress");
-        dialog.setWindowTitle(title);
-        dialog.setAccessibleName(title);
-        dialog.setWindowModality(Qt::ApplicationModal);
-        label.setStyleSheet("color: #f5f6f7; background: transparent; border: none;");
-        auto layout=new QHBoxLayout(&dialog);
+        dialog->setObjectName("operationProgress");
+        dialog->setWindowTitle(title);
+        dialog->setAccessibleName(title);
+        dialog->setWindowModality(Qt::ApplicationModal);
+        label->setStyleSheet("color: #f5f6f7; background: transparent; border: none;");
+        auto layout=new QHBoxLayout(dialog);
         layout->setContentsMargins(24,18,24,18);
-        label.setObjectName("operationMessage");
-        label.setAlignment(Qt::AlignCenter);
-        label.setTextFormat(Qt::PlainText);
-        layout->addWidget(&label);
+        label->setObjectName("operationMessage");
+        label->setAlignment(Qt::AlignCenter);
+        label->setTextFormat(Qt::PlainText);
+        layout->addWidget(label);
         const QRect available=parent->screen()->availableGeometry();
         const int width=qMin(640,qMax(160,qMin(parent->window()->width()-40,available.width()-40)));
-        dialog.setFixedSize(width,64);
+        dialog->setFixedSize(width,64);
         const QPoint center=parent->window()->frameGeometry().center();
-        dialog.move(qBound(available.left(),center.x()-width/2,available.right()-width+1),
+        dialog->move(qBound(available.left(),center.x()-width/2,available.right()-width+1),
                     qBound(available.top(),center.y()-32,available.bottom()-63));
         QApplication::setOverrideCursor(Qt::WaitCursor);
         visible = parent->isVisible();
         setStage(stage);
         if (visible) {
-            dialog.show();
+            dialog->show();
             layout->activate();
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers);
             paintMessage();
         }
     }
     ~OperationProgress() {
-        dialog.hide();
+        if(dialog)delete dialog.data();
         QApplication::restoreOverrideCursor();
         if (window && window->statusBar()->currentMessage() == lastStage)
             window->statusBar()->showMessage(QObject::tr("Operation complete."), 3000);
     }
+    OperationProgress(const OperationProgress &)=delete;
+    OperationProgress &operator=(const OperationProgress &)=delete;
     void setStage(const QString &stage) {
+        if(!dialog || !label)return;
         lastStage = stage;
-        label.setText(label.fontMetrics().elidedText(stage,Qt::ElideRight,dialog.width()-48));
-        label.setAccessibleDescription(stage);
-        label.setToolTip(stage);
+        label->setText(label->fontMetrics().elidedText(stage,Qt::ElideRight,dialog->width()-48));
+        label->setAccessibleDescription(stage);
+        label->setToolTip(stage);
         if (window) {
             window->statusBar()->showMessage(stage);
             window->statusBar()->repaint();
         }
-        if (visible && dialog.isVisible()) paintMessage();
+        if (visible && dialog->isVisible()) paintMessage();
     }
     template<class Function>
     auto run(Function function) -> std::invoke_result_t<Function> {
@@ -104,12 +107,13 @@ private:
         // re-enter the operation before a synchronous save has finished.
         QCoreApplication::sendPostedEvents(nullptr,QEvent::LayoutRequest);
         QCoreApplication::sendPostedEvents(nullptr,QEvent::UpdateRequest);
-        label.repaint();
-        dialog.repaint();
+        if(!dialog || !label)return;
+        label->repaint();
+        dialog->repaint();
     }
-    OperationMessagePanel dialog;
-    QLabel label;
-    QMainWindow *window;
+    QPointer<OperationMessagePanel> dialog;
+    QPointer<QLabel> label;
+    QPointer<QMainWindow> window;
     QString lastStage;
     bool visible = false;
 };

@@ -46,6 +46,8 @@ add_executable(StereoMask
     smartselection.h
     mainwindow.cpp
     mainwindow.h
+    quickaccess.cpp
+    quickaccess.h
     creativetools.cpp
     guidedprocess.cpp
     keyboardshortcuts.cpp
@@ -122,7 +124,7 @@ if(STEREOMASK_BUILD_TESTS)
     target_link_libraries(StereoMaskSmartTest PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Concurrent Qt6::Network ${OpenCV_LIBS})
     add_test(NAME smart-selection COMMAND StereoMaskSmartTest)
     set_tests_properties(smart-selection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    add_executable(StereoMaskHelpTest tests/help_test.cpp mainwindow.cpp mainwindow.h creativetools.cpp guidedprocess.cpp keyboardshortcuts.cpp decorations.cpp updatechecker.cpp updatechecker.h
+    add_executable(StereoMaskHelpTest tests/help_test.cpp mainwindow.cpp mainwindow.h quickaccess.cpp quickaccess.h creativetools.cpp guidedprocess.cpp keyboardshortcuts.cpp decorations.cpp updatechecker.cpp updatechecker.h
         smartselection.cpp stereoviewwidget.cpp stereoviewwidget.h
         stereoimageprocessor.cpp undocommand.cpp undocommand.h resources.qrc)
     target_include_directories(StereoMaskHelpTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
@@ -139,12 +141,16 @@ if(STEREOMASK_BUILD_TESTS)
     target_include_directories(StereoMaskCreativeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(StereoMaskCreativeTest PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Concurrent Qt6::Network ${OpenCV_LIBS})
     add_test(NAME creative-tools COMMAND StereoMaskCreativeTest)
+    add_executable(StereoMaskQuickAccessTest tests/quickaccess_test.cpp quickaccess.cpp quickaccess.h)
+    target_include_directories(StereoMaskQuickAccessTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(StereoMaskQuickAccessTest PRIVATE Qt6::Widgets)
+    add_test(NAME quick-access COMMAND StereoMaskQuickAccessTest)
     get_target_property(qt_qmake_executable Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(qt_bin_directory "${qt_qmake_executable}" DIRECTORY)
-    set_tests_properties(smart-selection user-guide creative-tools PROPERTIES
+    set_tests_properties(smart-selection user-guide creative-tools quick-access PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${qt_bin_directory}/../plugins/platforms")
     if(WIN32)
-        set_tests_properties(user-guide creative-tools PROPERTIES
+        set_tests_properties(user-guide creative-tools quick-access PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_QPA_PLATFORM_PLUGIN_PATH=${qt_bin_directory}/../plugins/platforms")
     endif()
 endif()

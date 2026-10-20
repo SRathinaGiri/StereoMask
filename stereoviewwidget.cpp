@@ -1074,7 +1074,7 @@ void StereoViewWidget::brushAt(const QPoint &pos) {
 void StereoViewWidget::loadBrushSettings(const QJsonObject &obj) {
     m_processor.setStereoWindowOffset(obj["stereoWindowOffset"].toInt(0));
     const auto frame=obj["pictureFrame"].toObject();
-    m_textObjects.clear();m_pictureFrame=PictureFrameSettings{};
+    m_textObjects.clear();m_textKeyLeft.clear();m_textKeyRight.clear();m_textCacheLeft=QImage();m_textCacheRight=QImage();m_pictureFrame=PictureFrameSettings{};
     m_pictureFrame.enabled=frame["enabled"].toBool(false);
     m_pictureFrame.width=qBound(1,frame["width"].toInt(24),1000);
     m_pictureFrame.style=qBound(0,frame["style"].toInt(1),2);
@@ -1087,7 +1087,7 @@ void StereoViewWidget::loadBrushSettings(const QJsonObject &obj) {
     m_pictureFrame.shadowBlur=qBound(0,frame["shadowBlur"].toInt(12),200);
     m_pictureFrame.shadowSpread=qBound(0,frame["shadowSpread"].toInt(0),200);
     const QColor shadowColor(frame["shadowColor"].toString("#000000"));if(shadowColor.isValid())m_pictureFrame.shadowColor=shadowColor;
-    const auto texts=obj["stereoText"].toArray();for(int i=0;i<qMin(100,texts.size());++i)m_textObjects.append(textFromJson(texts[i].toObject(),m_processor.leftImage().size()));
+    const auto texts=obj["stereoText"].toArray();for(int i=0;i<qMin(100,texts.size());++i)if(texts[i].isObject())m_textObjects.append(textFromJson(texts[i].toObject(),m_processor.leftImage().size()));
     cancelLasso();
     m_completedLeft=decodeLassoPath(obj["lassoOutlineLeft"].toObject());
     m_completedRight=decodeLassoPath(obj["lassoOutlineRight"].toObject());
@@ -1145,6 +1145,7 @@ bool StereoViewWidget::closeProject()
     m_smartRegionRight = QRect();
     ++m_smartRevision;
     m_textObjects.clear();
+    m_textKeyLeft.clear();m_textKeyRight.clear();m_textCacheLeft=QImage();m_textCacheRight=QImage();
     m_pictureFrame = PictureFrameSettings{};
     m_exportKeyLeft.clear();
     m_exportKeyRight.clear();
@@ -1196,7 +1197,7 @@ bool StereoViewWidget::loadImage(const QString &fileName)
     if (loaded.first) {
         m_processor=loaded.second;
         m_operationProgress->setStage(tr("Restoring image settings and selections…"));
-        m_textObjects.clear();m_pictureFrame=PictureFrameSettings{};
+        m_textObjects.clear();m_textKeyLeft.clear();m_textKeyRight.clear();m_textCacheLeft=QImage();m_textCacheRight=QImage();m_pictureFrame=PictureFrameSettings{};
         m_selectionObjects.clear(); m_baseRevealLeft=QImage(); m_baseRevealRight=QImage();
         m_baseOutlineLeft=QPainterPath(); m_baseOutlineRight=QPainterPath();
         emit selectionObjectsChanged();

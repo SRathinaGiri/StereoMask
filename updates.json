@@ -1,6 +1,6 @@
 {
-  "version": "2.3.0",
-  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.3.0",
+  "version": "2.4.0",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.0",
   "package_type": "app",
-  "notes": "Windows v2.3.0 adds embossed/engraved colored and cutout text, stereo pitch/yaw/roll with depth gradients, fixes steep-angle text clipping, and adds processing feedback including file opening and applying text/bubbles. It also improves frame-point creation, wheel scrolling, and centralized version reporting. See the release notes and Windows-to-Mac handoff for details."
+  "notes": "Windows v2.4.0 adds compact left-side toolbox drawers and persistent, reorderable Quick Access favorites, with borderless controls and full-width dropdowns. It includes processing-panel lifetime, project-loading and text-cache safety fixes reviewed from Mac R19. Windows fuzzy selection retains diagonal connectivity. See the release notes and updated Mac handoff."
 }

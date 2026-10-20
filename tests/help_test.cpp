@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "appversion.h"
 #include "operationprogress.h"
+#include "quickaccess.h"
 #include <QThread>
 #include <QProgressBar>
 #include "stereoviewwidget.h"
@@ -30,6 +31,10 @@
 #include <QSpinBox>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSettings>
+#include <QDir>
+#include <QPointer>
 #include <iostream>
 
 class BrowserCapture : public QObject {
@@ -76,6 +81,21 @@ int main(int argc, char **argv) {
         }
         if(host.findChild<QDialog *>("operationProgress") || (QApplication::overrideCursor()!=nullptr)!=hadCursor)return 60;
         host.close();
+    }
+    {
+        auto host=std::make_unique<QMainWindow>();host->resize(640,400);host->show();app.processEvents();
+        bool queuedCommand=false;
+        QTimer::singleShot(0,host.get(),[&]{queuedCommand=true;});
+        QApplication::setOverrideCursor(Qt::CrossCursor);
+        auto progress=std::make_unique<OperationProgress>(host.get(),"Safety test","Saving project...");
+        if(queuedCommand){std::cerr<<"Processing-panel construction reentered queued commands\n";return 66;}
+        QPointer<QDialog> panel=host->findChild<QDialog *>("operationProgress");
+        if(!panel)return 66;
+        host.reset();
+        if(panel){std::cerr<<"Processing panel outlived its Qt parent\n";return 66;}
+        progress->setStage("Host already closed");progress.reset();
+        if(!QApplication::overrideCursor() || QApplication::overrideCursor()->shape()!=Qt::CrossCursor)return 66;
+        QApplication::restoreOverrideCursor();
     }
     {
         QTemporaryDir openingTemp;
@@ -179,15 +199,67 @@ int main(int argc, char **argv) {
     auto guided=window.findChild<QAction *>("guidedProcessAction");
     auto keys=window.findChild<QAction *>("keyboardShortcutsAction");
     if (!compact || !history || history->windowTitle()!="History" || !guided || !keys) return 40;
-    for (int i=0;i<7;++i) if (!window.findChild<QAction *>(QString("sectionToggle%1").arg(i))) return 41;
+    for (int i : {0,1,3,4,5,6}) if (!window.findChild<QAction *>(QString("sectionToggle%1").arg(i))) return 41;
+    auto stereoWindow=window.findChild<QAction *>("stereoWindowAction");
+    if(!stereoWindow || !compact->actions().contains(stereoWindow) || stereoWindow->isCheckable() || window.findChild<QDockWidget *>("controlDrawer2"))return 41;
+    if(compact->actions().last()!=window.findChild<QAction *>("sectionToggle6") || compact->actions().indexOf(guided)!=compact->actions().size()-2)return 41;
     window.resize(1280, 900);
     window.show();
     QApplication::processEvents();
     history->show();
     QApplication::processEvents();
+    if(history->width()!=240){std::cerr<<"History must use its compact 240-pixel width\n";return 63;}
     auto list=window.findChild<QTreeWidget *>("selectionObjectsList");
     auto view=qobject_cast<StereoViewWidget *>(window.centralWidget());
     if (!list || !view) return 8;
+    auto createDrawer=window.findChild<QDockWidget *>("controlDrawer3");
+    auto selectionDrawer=window.findChild<QDockWidget *>("controlDrawer5");
+    auto createToggle=window.findChild<QAction *>("sectionToggle3");
+    auto selectionToggle=window.findChild<QAction *>("sectionToggle5");
+    auto quickToggle=window.findChild<QAction *>("quickAccessToggleAction");
+    auto quickDrawer=window.findChild<QDockWidget *>("quickAccessDock");
+    auto quickAccess=window.findChild<QuickAccess *>("quickAccessPanel");
+    if(!quickToggle || !quickDrawer || !quickAccess || !compact->actions().contains(quickToggle))return 65;
+    quickToggle->trigger();QApplication::processEvents();
+    if(!quickDrawer->isVisible() || history->isVisible() || quickDrawer->width()!=150)return 65;
+    auto collapse=window.findChild<QAction *>("collapseToolboxAction");
+    auto resetLayout=window.findChild<QAction *>("resetToolboxLayoutAction");
+    if(!createDrawer || !selectionDrawer || !collapse || !resetLayout || window.toolBarArea(compact)!=Qt::LeftToolBarArea || compact->width()>64){std::cerr<<"Toolbox rail/controls missing or too wide: "<<compact->width()<<'\n';return 63;}
+    createToggle->setChecked(true);QApplication::processEvents();
+    if(!createDrawer->isVisible() || history->isVisible() || window.dockWidgetArea(createDrawer)!=Qt::LeftDockWidgetArea){std::cerr<<"Drawer activation did not replace History\n";return 63;}
+    const int openCanvasWidth=view->width();
+    createToggle->trigger();QApplication::processEvents();
+    if(createDrawer->isVisible() || view->width()<openCanvasWidth+150){std::cerr<<"Closing drawer did not reclaim canvas\n";return 63;}
+    selectionToggle->trigger();QApplication::processEvents();
+    if(!selectionDrawer->isVisible() || createDrawer->isVisible() || !selectionDrawer->findChild<QScrollArea *>()){std::cerr<<"Selection drawer did not open\n";return 63;}
+    if(quickDrawer->isVisible())return 65;
+    auto selectionScroll=selectionDrawer->findChild<QScrollArea *>();
+    for(auto combo:selectionDrawer->findChildren<QComboBox *>()) {
+        const int right=combo->mapTo(selectionScroll->viewport(),QPoint(combo->width(),0)).x();
+        if(right>selectionScroll->viewport()->width() || right<selectionScroll->viewport()->width()-10){std::cerr<<"Dropdown must fill usable drawer width: "<<right<<" of "<<selectionScroll->viewport()->width()<<'\n';return 65;}
+    }
+    window.findChild<QAction *>("sectionToggle0")->setChecked(true);QApplication::processEvents();
+    auto fileDrawer=window.findChild<QDockWidget *>("controlDrawer0");auto fileScroll=fileDrawer->findChild<QScrollArea *>();
+    auto recentAction=window.findChild<QMenu *>("openRecentMenu")->menuAction();
+    auto recentButton=qobject_cast<QToolButton *>(window.findChild<QToolBar *>("controlSection0")->widgetForAction(recentAction));
+    if(!recentButton || recentButton->mapTo(fileScroll->viewport(),QPoint(recentButton->width(),0)).x()<fileScroll->viewport()->width()-10)return 65;
+    selectionToggle->setChecked(true);QApplication::processEvents();
+    selectionDrawer->setFloating(true);history->show();QApplication::processEvents();
+    if(!selectionDrawer->isVisible() || !history->isVisible()){std::cerr<<"Floating drawer was hidden by History\n";return 63;}
+    selectionDrawer->setFloating(false);QApplication::processEvents();
+    if(history->isVisible()){std::cerr<<"Redocking did not replace History\n";return 63;}
+    resetLayout->trigger();QApplication::processEvents();
+    if(!createDrawer->isVisible() || createDrawer->isFloating() || selectionDrawer->isVisible()){std::cerr<<"Reset toolbox did not restore default drawer\n";return 63;}
+    if(view->mapTo(&window,QPoint()).y()>window.menuBar()->height()+12){std::cerr<<"Top toolbar rows still occupy canvas\n";return 63;}
+    window.findChild<QAction *>("sectionToggle4")->setChecked(true);QApplication::processEvents();
+    auto editDrawer=window.findChild<QDockWidget *>("controlDrawer4");
+    for(auto drawer:window.findChildren<QDockWidget *>())if(drawer->objectName().startsWith("controlDrawer") && drawer->width()!=150){std::cerr<<"Command drawer must be 150 pixels wide\n";return 64;}
+    for(auto spin:editDrawer->findChildren<QSpinBox *>())if(spin->width()>150)return 64;
+    for(auto bar:editDrawer->findChildren<QToolBar *>())for(auto action:bar->actions()) {
+        if(auto button=qobject_cast<QToolButton *>(bar->widgetForAction(action)))
+            if(button->isVisible() && (button->width()>150 || button->x()>8)){std::cerr<<"Drawer buttons must be left aligned and at most 150 pixels wide: "<<button->x()<<","<<button->width()<<'\n';return 64;}
+    }
+    if(!window.grab().save("windows-toolbox-buttons-ui.png"))return 64;
     QTemporaryDir selectionFixture;
     QImage pair(480,180,QImage::Format_RGB32); pair.fill(QColor(85,130,160));
     {QPainter p(&pair); p.fillRect(QRect(90,20,60,140),QColor(220,170,90));p.fillRect(QRect(330,20,60,140),QColor(220,170,90));}
@@ -335,6 +407,42 @@ int main(int argc, char **argv) {
     guided->trigger();
     auto guidedDock=window.findChild<QDockWidget *>("guidedProcessDock");
     if(!guidedDock || !guidedDock->findChild<QPushButton *>("guidedNext") || !guidedDock->findChild<QLabel *>("guidedInstructions"))return 45;
+    guidedDock->hide();selectionToggle->setChecked(true);QApplication::processEvents();
+    if(!window.grab().save("windows-toolbox-open-ui.png"))return 63;
+    {
+        QSettings preferences(QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("layout.ini"),QSettings::IniFormat);
+        const auto previous=preferences.value("quickAccess/commands");
+        quickAccess->addCommand("view.fit");quickAccess->addCommand("view.pan");quickAccess->addCommand("applyLassoAction");quickAccess->addCommand("selection.combo0.option3");
+        quickToggle->trigger();QApplication::processEvents();
+        if(!quickDrawer->isVisible() || selectionDrawer->isVisible())return 65;
+        auto panButton=quickAccess->findChild<QToolButton *>("quickAccessCommand_view.pan");
+        if(!panButton || !panButton->defaultAction()->isCheckable())return 65;
+        const bool wasChecked=panButton->isChecked();panButton->click();
+        if(panButton->isChecked()==wasChecked || panButton->defaultAction()->isChecked()!=panButton->isChecked())return 65;
+        panButton->click();
+        if(!window.grab().save("windows-quick-access-ui.png"))return 65;
+        if(previous.isValid())preferences.setValue("quickAccess/commands",previous);else preferences.remove("quickAccess/commands");
+        preferences.sync();quickAccess->restore();
+    }
+    history->show();QApplication::processEvents();
+    if(!window.grab().save("windows-toolbox-history-ui.png"))return 63;
+    collapse->trigger();QApplication::processEvents();
+    for(auto dock:window.findChildren<QDockWidget *>())if(dock!=guidedDock && dock->isVisible())return 63;
+    if(!window.grab().save("windows-toolbox-collapsed-ui.png"))return 63;
+    window.resize(900,650);selectionToggle->setChecked(true);QApplication::processEvents();
+    if(window.width()>900 || view->width()<400 || compact->width()>64)return 63;
+    if(!window.grab().save("windows-toolbox-small-ui.png"))return 63;
+    QSettings layoutSettings(QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("layout.ini"),QSettings::IniFormat);
+    const QVariant previousLayout=layoutSettings.value("drawerLayout/state");
+    window.close();
+    {
+        MainWindow restored;restored.resize(900,650);restored.show();QApplication::processEvents();
+        auto selected=restored.findChild<QDockWidget *>("controlDrawer5");
+        auto restoredRail=restored.findChild<QToolBar *>("compactControls");
+        if(!selected || !selected->isVisible() || restored.dockWidgetArea(selected)!=Qt::LeftDockWidgetArea || restored.toolBarArea(restoredRail)!=Qt::LeftToolBarArea){std::cerr<<"Restore drawer visible="<<(selected && selected->isVisible())<<" area="<<restored.dockWidgetArea(selected)<<" rail="<<restored.toolBarArea(restoredRail)<<" saved="<<layoutSettings.value("drawerLayout/state").toByteArray().size()<<'\n';for(auto d:restored.findChildren<QDockWidget *>())std::cerr<<d->objectName().toStdString()<<" hidden="<<d->isHidden()<<'\n';return 63;}
+        restored.close();
+    }
+    if(previousLayout.isValid())layoutSettings.setValue("drawerLayout/state",previousLayout);else layoutSettings.remove("drawerLayout/state");
     QDesktopServices::unsetUrlHandler("file");
     std::cout << "Help menu opens exact embedded guide through file URL; new brush names verified.\n";
     return 0;

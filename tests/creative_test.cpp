@@ -6,6 +6,8 @@
 #include <iostream>
 #include <cstdlib>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QFile>
 #include <QtMath>
 
 static void require(bool value, const char *message)
@@ -33,6 +35,10 @@ int main(int argc, char **argv)
     const auto tolerant=StereoViewWidget::colorSelectionMask(colors,QPoint(0,0),12,true);
     require(qAlpha(fuzzy.pixel(0,0)) && qAlpha(fuzzy.pixel(1,0)) && !qAlpha(fuzzy.pixel(6,0)),"fuzzy selection stays connected");
     require(qAlpha(global.pixel(0,0)) && qAlpha(global.pixel(6,0)),"color threshold selects disconnected matches");
+    QImage diagonal(2,2,QImage::Format_RGB32);diagonal.fill(Qt::black);
+    diagonal.setPixelColor(0,0,Qt::red);diagonal.setPixelColor(1,1,Qt::red);
+    require(qAlpha(StereoViewWidget::colorSelectionMask(diagonal,QPoint(0,0),0,true).pixel(1,1))>0,
+            "Windows fuzzy selection retains diagonal connectivity");
     require(qAlpha(tolerant.pixel(2,0)),"color tolerance includes nearby RGB values");
     view.applyColorSelection(false,QPoint(10,10),true);
     require(view.selectionObjects().size()==1 && view.selectionObjects()[0].name.startsWith("Fuzzy"),"fuzzy selection becomes History object");
@@ -203,6 +209,16 @@ int main(int argc, char **argv)
     require(loaded.textObjects().size() == 1 && loaded.pictureFrameSettings().shadowEnabled,
             "project keeps decorations");
     require(loaded.textObjects().first().relief==2 && loaded.textObjects().first().tiltX==20,"project keeps text relief and tilt");
+    {
+        QFile project(folder.path()+"/source.msk");require(project.open(QIODevice::ReadOnly),"read project fixture");
+        auto object=QJsonDocument::fromJson(project.readAll()).object();
+        const auto validText=object["stereoText"].toArray().first();
+        object["stereoText"]=QJsonArray{QJsonValue(),"invalid",42,true,QJsonArray{},validText};
+        QFile malformed(folder.path()+"/malformed.msk");require(malformed.open(QIODevice::WriteOnly),"write malformed text fixture");
+        require(malformed.write(QJsonDocument(object).toJson())>0,"save malformed text fixture");malformed.close();
+        require(loaded.loadProject(malformed.fileName()) && loaded.textObjects().size()==1 && loaded.textObjects().first().text==text.text,
+                "skip non-object project text entries without synthesizing default text");
+    }
     const QString output = folder.path() + "/output.png";
     require(StereoViewWidget::saveComposedPair(output, view.exportEye(false), view.exportEye(true),
                                                0, 0, 0, Qt::transparent), "decorated PNG export");
@@ -219,5 +235,8 @@ int main(int argc, char **argv)
     require(coveredText==coveredBase && coveredText!=beforeOcclusion,"foreground changes invalidate applied text overlay cache");
     require(loaded.closeProject() && loaded.textObjects().isEmpty()
             && !loaded.pictureFrameSettings().shadowEnabled, "close clears decoration state");
+    const QString replacement=folder.path()+"/replacement.png";require(source.save(replacement),"save replacement image");
+    require(loaded.loadImage(replacement) && loaded.textObjects().isEmpty()
+            && loaded.exportEye(false)==loaded.exportEye(false,false),"new image must not retain previous text overlays");
     std::cout << "Shapes, curve splitting, shadow, text, undo, project and PNG export: PASS\n";
 }

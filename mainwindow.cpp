@@ -3,6 +3,7 @@
 #include "updatechecker.h"
 #include "appversion.h"
 #include "operationprogress.h"
+#include "quickaccess.h"
 #include <QShortcut>
 #include <QSettings>
 #include <QWidgetAction>
@@ -45,6 +46,8 @@
 #include <QInputDialog>
 #include <QSlider>
 #include <QKeyEvent>
+#include <QCloseEvent>
+#include <QScrollArea>
 #include <QtMath>
 #include <cmath>
 
@@ -235,6 +238,15 @@ MainWindow::~MainWindow()
 {
 }
 
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    QSettings preferences(QFileInfo(settingsFilePath()).dir().filePath("layout.ini"),QSettings::IniFormat);
+    preferences.setValue("drawerLayout/state",saveState(1));
+    m_restoringToolbox=true;
+    QMainWindow::closeEvent(event);
+    m_restoringToolbox=false;
+}
+
 void MainWindow::setupConnections()
 {
     connect(m_viewWidget, &StereoViewWidget::selectionChanged, this, [this](int disp){
@@ -341,6 +353,35 @@ static void addToolGroupLabel(QToolBar *toolbar, const QString &text)
     toolbar->addWidget(label);
 }
 
+class DrawerWidthController : public QObject
+{
+public:
+    DrawerWidthController(QScrollArea *scroll, const QList<QToolBar *> &rows)
+        : QObject(scroll), m_scroll(scroll), m_rows(rows)
+    {
+        scroll->viewport()->installEventFilter(this);
+    }
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if(event->type()==QEvent::Resize || event->type()==QEvent::Show) {
+            const int rowWidth=qMax(0,m_scroll->viewport()->width()-2);
+            for(auto row:m_rows) {
+                row->setFixedWidth(rowWidth);
+                const int controlWidth=qMax(0,rowWidth-4);
+                for(auto action:row->actions())if(auto widget=row->widgetForAction(action)) {
+                    if(qobject_cast<QComboBox *>(widget) || qobject_cast<QLabel *>(widget) || action->menu())
+                        widget->setFixedWidth(controlWidth);
+                }
+            }
+        }
+        return false;
+    }
+private:
+    QScrollArea *m_scroll;
+    QList<QToolBar *> m_rows;
+};
+
 static QIcon customIcon(const QString &name)
 {
     constexpr int size = 64;
@@ -402,6 +443,13 @@ static QIcon customIcon(const QString &name)
     } else if (name == "save") {
         p.setPen(QPen(ink, 4)); p.setBrush(QColor("#bfdbfe")); p.drawRoundedRect(QRectF(14, 13, 36, 38), 4, 4);
         p.setBrush(Qt::white); p.drawRect(21, 36, 22, 12); p.setBrush(blue); p.drawRect(22, 16, 17, 12);
+    } else if (name == "favorite") {
+        QPolygonF star;
+        for(int i=0;i<10;++i) {
+            const double angle=qDegreesToRadians(-90.0+i*36.0),radius=(i%2==0 ? 23.0 : 10.0);
+            star.append(QPointF(32+std::cos(angle)*radius,32+std::sin(angle)*radius));
+        }
+        p.setPen(QPen(ink,3));p.setBrush(QColor("#facc15"));p.drawPolygon(star);
     } else if (name == "export") {
         p.setPen(QPen(ink, 4)); p.setBrush(QColor("#dcfce7")); p.drawRect(13, 18, 38, 28);
         arrow({25, 32}, {45, 32}, green);
@@ -921,10 +969,17 @@ void MainWindow::createToolbar()
     connect(m_viewWidget,&StereoViewWidget::maskAppearanceChanged,this,syncAppearance);
     syncAppearance(m_viewWidget->maskColor(),m_viewWidget->maskOpacity());
 
+    const QString drawerButtonStyle=QStringLiteral(
+        "QToolButton { border: 1px solid transparent; background: transparent; padding: 1px; min-height: 20px; }"
+        "QToolButton:hover:!disabled { background: palette(midlight); }"
+        "QToolButton:pressed:!disabled { background: palette(mid); }"
+        "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
+        "QToolButton:focus { border-color: palette(highlight); }");
     QDockWidget *selectionsDock=new QDockWidget(tr("History"),this);
     selectionsDock->setObjectName("selectionObjectsDock");
     selectionsDock->setAllowedAreas(Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea);
     QWidget *selectionPanel=new QWidget(selectionsDock);
+    selectionPanel->setStyleSheet(drawerButtonStyle);
     QVBoxLayout *selectionLayout=new QVBoxLayout(selectionPanel); selectionLayout->setContentsMargins(4,4,4,4);
     QToolBar *objectTools=new QToolBar(selectionPanel);
     objectTools->setIconSize(QSize(18,18));
@@ -951,13 +1006,14 @@ void MainWindow::createToolbar()
     objects->setHeaderLabels({tr(""),tr("Selection"),tr("Eye"),tr("Mode")});
     objects->setRootIsDecorated(false); objects->setSelectionMode(QAbstractItemView::SingleSelection);
     objects->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    objects->header()->setStretchLastSection(false);
     objects->header()->setSectionResizeMode(0,QHeaderView::Fixed); objects->setColumnWidth(0,30);
     objects->header()->setSectionResizeMode(1,QHeaderView::Stretch);
     objects->header()->setSectionResizeMode(2,QHeaderView::ResizeToContents);
     objects->header()->setSectionResizeMode(3,QHeaderView::ResizeToContents);
     selectionLayout->addWidget(objects); selectionsDock->setWidget(selectionPanel);
     addDockWidget(Qt::RightDockWidgetArea,selectionsDock);
-    selectionsDock->setMinimumWidth(290);
+    selectionsDock->setFixedWidth(240);
     auto updateObjectActions=[objects,editObject,renameObject,deleteObject,moveObjectUp,moveObjectDown,invertObject,movePolygon]() {
         auto item=objects->currentItem();
         editObject->setEnabled(item && item->data(1,Qt::UserRole+1).toBool());
@@ -1079,31 +1135,122 @@ void MainWindow::createToolbar()
     const QList<QList<QToolBar *>> sections={{fileViewBar},{navigationBar},{stereoBar},{createBar},{editMaskBar,transformBar},{brushBar,selectionBar,maskBar},{helpBar}};
     const QStringList names={tr("File"),tr("View"),tr("Stereo Window"),tr("Create Frame"),tr("Edit Frame"),tr("Out-of-Frame"),tr("Help")};
     for(const auto &rows:sections)for(auto row:rows){removeToolBarBreak(row);removeToolBar(row);}
-    bool firstRow=true;for(const auto &rows:sections)for(auto row:rows){if(!firstRow)addToolBarBreak();addToolBar(row);firstRow=false;}
     auto compact=new QToolBar(tr("Control sections"),this);compact->setObjectName("compactControls");configureToolbar(compact);
-    insertToolBar(fileViewBar,compact);insertToolBarBreak(fileViewBar);
+    compact->setWindowTitle(tr("Toolbox rail"));compact->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    compact->setAllowedAreas(Qt::LeftToolBarArea);addToolBar(Qt::LeftToolBarArea,compact);
     auto menus=new QMenu(this);menus->setObjectName("mainControlsMenu");
-    auto menuButton=new QToolButton(compact);menuButton->setText(tr("Main Menu"));menuButton->setMenu(menus);menuButton->setPopupMode(QToolButton::InstantPopup);compact->addWidget(menuButton);
-    auto preferences=new QSettings(this);
+    auto menuButton=new QToolButton(compact);menuButton->setText(tr("Main Menu"));menuButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogListView));menuButton->setToolTip(tr("Main Menu"));menuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);menuButton->setMenu(menus);menuButton->setPopupMode(QToolButton::InstantPopup);compact->addWidget(menuButton);
+    auto preferences=new QSettings(QFileInfo(settingsFilePath()).dir().filePath("layout.ini"),QSettings::IniFormat,this);
+    QList<QDockWidget *> drawers;
+    const QList<QIcon> drawerIcons={newAction->icon(),pan->icon(),windowDepth->icon(),shapes->icon(),editFrame->icon().isNull() ? curve->icon() : editFrame->icon(),freehand->icon(),help->icon()};
     QList<QAction *> toggles;
     for(int i=0;i<sections.size();++i) {
-        const auto rows=sections[i];const QString key=QString("organizedLayout/%1").arg(i);
+        const auto rows=sections[i];
         for(int j=0;j<rows.size();++j)rows[j]->setObjectName(j==0 ? QString("controlSection%1").arg(i) : QString("controlSection%1Row%2").arg(i).arg(j));
-        auto toggle=new QAction(names[i],this);toggle->setObjectName(QString("sectionToggle%1").arg(i));toggle->setCheckable(true);toggles.append(toggle);
-        const bool expanded=i!=2 && preferences->value(key,false).toBool();toggle->setChecked(expanded);for(auto row:rows)row->setVisible(expanded);
-        connect(toggle,&QAction::toggled,this,[rows,preferences,key](bool shown){for(auto row:rows)row->setVisible(shown);preferences->setValue(key,shown);});
-        if(i<6)compact->addAction(i==2 ? windowDepth : toggle);
+        if(i==2) {
+            stereoBar->hide();
+            toggles.append(windowDepth);
+            compact->addAction(windowDepth);
+            continue;
+        }
+        auto drawer=new QDockWidget(names[i],this);drawer->setObjectName(QString("controlDrawer%1").arg(i));
+        drawer->setAllowedAreas(Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea);
+        drawer->setFixedWidth(150);
+        drawer->setToolTip(tr("Drag the title bar to move or float this drawer. Close it to reclaim the canvas."));
+        auto scroll=new QScrollArea(drawer);scroll->setWidgetResizable(true);scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);scroll->setFrameShape(QFrame::NoFrame);
+        auto page=new QWidget(scroll);auto pageLayout=new QVBoxLayout(page);pageLayout->setContentsMargins(1,4,1,4);pageLayout->setSpacing(8);
+        page->setStyleSheet(drawerButtonStyle);
+        for(auto row:rows) {
+            row->setParent(page);row->setOrientation(Qt::Vertical);row->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+            row->setFixedWidth(128);row->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);pageLayout->addWidget(row,0,Qt::AlignLeft);row->show();
+            for(auto action:row->actions())if(auto widget=row->widgetForAction(action)) {
+                widget->setMinimumWidth(0);widget->setMaximumWidth(126);
+                row->layout()->setAlignment(widget,Qt::AlignLeft);
+                if(auto label=qobject_cast<QLabel *>(widget))label->setWordWrap(true);
+                if(auto spin=qobject_cast<QSpinBox *>(widget))spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+                if(auto combo=qobject_cast<QComboBox *>(widget)) {
+                    combo->setMinimumContentsLength(1);
+                    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+                    combo->setToolTip(combo->currentText());
+                    connect(combo,&QComboBox::currentTextChanged,combo,&QWidget::setToolTip);
+                }
+                if(auto button=qobject_cast<QToolButton *>(widget)) {
+                    auto caption=button->text();
+                    if(button->toolTip().isEmpty())button->setToolTip(caption);
+                    const int textWidth=126-12-(button->icon().isNull() ? 0 : button->iconSize().width()+4);
+                    button->setText(button->fontMetrics().elidedText(caption,Qt::ElideRight,textWidth));
+                }
+            }
+        }
+        pageLayout->addStretch();scroll->setWidget(page);new DrawerWidthController(scroll,rows);drawer->setWidget(scroll);addDockWidget(Qt::LeftDockWidgetArea,drawer);drawer->hide();drawers.append(drawer);
+        auto toggle=new QAction(drawerIcons[i],names[i],this);toggle->setObjectName(QString("sectionToggle%1").arg(i));toggle->setCheckable(true);toggle->setToolTip(tr("Open / close %1 drawer").arg(names[i]));toggles.append(toggle);
+        connect(toggle,&QAction::toggled,drawer,&QDockWidget::setVisible);
+        connect(drawer,&QDockWidget::visibilityChanged,toggle,[this,toggle,drawer](bool shown){if(!isMinimized()){QSignalBlocker blocker(toggle);toggle->setChecked(!drawer->isHidden());}Q_UNUSED(shown);});
+        if(i!=6)compact->addAction(toggle);
         for(auto row:rows)for(auto action:row->actions())if(!qobject_cast<QWidgetAction *>(action))addAction(action);
+    }
+    removeDockWidget(selectionsDock);addDockWidget(Qt::LeftDockWidgetArea,selectionsDock);selectionsDock->hide();drawers.append(selectionsDock);
+    selectionsDock->toggleViewAction()->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    auto quickDrawer=new QDockWidget(tr("Quick Access"),this);
+    quickDrawer->setObjectName("quickAccessDock");quickDrawer->setFixedWidth(150);
+    quickDrawer->setAllowedAreas(Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea);
+    auto quickAccess=new QuickAccess(preferences,quickDrawer);quickAccess->setStyleSheet(drawerButtonStyle);
+    quickDrawer->setWidget(quickAccess);addDockWidget(Qt::LeftDockWidgetArea,quickDrawer);quickDrawer->hide();drawers.append(quickDrawer);
+    auto quickToggle=quickDrawer->toggleViewAction();quickToggle->setObjectName("quickAccessToggleAction");quickToggle->setIcon(customIcon("favorite"));
+    quickToggle->setToolTip(tr("Open / close Quick Access"));compact->addAction(quickToggle);viewMenu->addAction(quickToggle);
+    const QList<QPair<QAction *,QString>> commandIds={
+        {newAction,"file.new"},{openAction,"file.open"},{m_recentFilesMenu->menuAction(),"file.recent"},{saveAction,"file.save"},{exportAction,"file.export"},
+        {fit,"view.fit"},{zoomIn,"view.zoomIn"},{zoomOut,"view.zoomOut"},{pan,"view.pan"},{swap,"view.swap"},{anaglyph,"view.anaglyph"},
+        {maskPreview,"view.maskPreview"},{previewFeather,"view.feather"},{undo,"edit.undo"},{redo,"edit.redo"},{deleteSelected,"edit.deletePoint"},{clear,"edit.clear"},
+        {alignLeft,"align.left"},{alignRight,"align.right"},{alignTop,"align.top"},{alignBottom,"align.bottom"},{alignDepth,"align.depth"},
+        {scaleUp,"transform.scaleUp"},{scaleDown,"transform.scaleDown"},{shiftLeft,"transform.left"},{shiftRight,"transform.right"},{shiftUp,"transform.up"},{shiftDown,"transform.down"},
+        {curve,"transform.curve"},{lockH,"edit.lockH"},{lockV,"edit.lockV"},{snap,"edit.snap"},{freehand,"frame.freehand"},
+        {closeOutline,"selection.close"},{cancelOutline,"selection.cancel"},{clearPaint,"selection.clearPaint"},{settings,"app.settings"},{help,"app.help"},{about,"app.about"},
+        {editObject,"history.edit"},{renameObject,"history.rename"},{deleteObject,"history.delete"},{moveObjectUp,"history.up"},{moveObjectDown,"history.down"}};
+    for(const auto &entry:commandIds)entry.first->setProperty("quickAccessId",entry.second);
+    for(int i=0;i<m_rotationActions.size();++i)m_rotationActions[i]->setProperty("quickAccessId",QString("transform.rotate%1").arg(i));
+    auto registerCommand=[quickAccess](QAction *action,const QString &category) {
+        if(!action || action->isSeparator() || qobject_cast<QWidgetAction *>(action))return;
+        QString id=action->property("quickAccessId").toString();
+        if(id.isEmpty())id=action->objectName();
+        if(id.isEmpty())return;
+        QString group=category;
+        if(id.startsWith("align."))group+=tr(" / Align");
+        else if(id.startsWith("transform.scale"))group+=tr(" / Scale");
+        else if(id=="transform.left" || id=="transform.right" || id=="transform.up" || id=="transform.down")group+=tr(" / Move");
+        action->setProperty("quickAccessId",id);quickAccess->registerCommand(id,group,action);
+    };
+    for(int i=0;i<sections.size();++i)for(auto row:sections[i])for(auto action:row->actions())registerCommand(action,names[i]);
+    for(auto action:objectTools->actions())registerCommand(action,tr("History"));
+    m_checkUpdatesAction->setProperty("quickAccessId","app.updates");
+    registerCommand(stereoText,tr("Text"));registerCommand(about,tr("Help"));registerCommand(m_checkUpdatesAction,tr("Help"));
+    auto autoCommand=new QAction(autoMaskButton->icon(),tr("AutoMask"),this);autoCommand->setObjectName("quickAccessAutoMaskAction");
+    autoCommand->setToolTip(autoMaskButton->toolTip());autoCommand->setEnabled(m_viewWidget->canAutoMask());
+    connect(autoCommand,&QAction::triggered,this,runAutoMask);
+    connect(m_viewWidget,&StereoViewWidget::maskEmptyChanged,autoCommand,[this,autoCommand](bool empty){autoCommand->setEnabled(m_viewWidget->isImageLoaded() && empty);});
+    registerCommand(autoCommand,tr("Create Frame"));quickAccess->attachButton(autoMaskButton,autoCommand->objectName());
+    for(int i=0;i<autoMaskGroup->actions().size();++i) {
+        auto action=autoMaskGroup->actions()[i];action->setProperty("quickAccessId",QString("autoMask.mode%1").arg(i));registerCommand(action,tr("AutoMask"));
+    }
+    for(auto drawer:drawers) {
+        auto activate=[this,drawer,drawers] {
+            if(m_restoringToolbox || !isVisible() || !drawer->isVisible() || drawer->isFloating())return;
+            for(auto other:drawers)if(other!=drawer && !other->isFloating())other->hide();
+        };
+        connect(drawer,&QDockWidget::visibilityChanged,this,[activate](bool shown){if(shown)activate();});
+        connect(drawer,&QDockWidget::topLevelChanged,this,[activate](bool floating){if(!floating)activate();});
     }
     compact->addSeparator();compact->addAction(selectionsDock->toggleViewAction());
     selectionsDock->toggleViewAction()->setToolTip(tr("Show or hide History: individual selection and brush edits, not a whole-project undo timeline"));
     auto layoutMenu=new QMenu(tr("Layout"),compact);
-    auto expandAll=[toggles](bool shown){for(int i=0;i<toggles.size();++i)if(i!=2)toggles[i]->setChecked(shown);};
-    layoutMenu->addAction(tr("Show all sections"),this,[expandAll]{expandAll(true);});layoutMenu->addAction(tr("Hide all sections"),this,[expandAll]{expandAll(false);});
-    auto layoutButton=new QToolButton(compact);layoutButton->setText(tr("Layout"));layoutButton->setMenu(layoutMenu);layoutButton->setPopupMode(QToolButton::InstantPopup);compact->addWidget(layoutButton);compact->addAction(toggles[6]);
+    auto collapse=layoutMenu->addAction(tr("Close all drawers"),this,[drawers]{for(auto drawer:drawers)drawer->hide();});collapse->setObjectName("collapseToolboxAction");
+    auto reset=layoutMenu->addAction(tr("Reset toolbox layout"),this,[this,drawers,toggles,compact]{m_restoringToolbox=true;compact->show();for(auto drawer:drawers){drawer->hide();drawer->setFloating(false);addDockWidget(Qt::LeftDockWidgetArea,drawer);}m_restoringToolbox=false;toggles[3]->setChecked(true);});reset->setObjectName("resetToolboxLayoutAction");
+    auto layoutButton=new QToolButton(compact);layoutButton->setText(tr("Layout"));layoutButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogListView));layoutButton->setToolTip(tr("Toolbox layout"));layoutButton->setToolButtonStyle(Qt::ToolButtonIconOnly);layoutButton->setMenu(layoutMenu);layoutButton->setPopupMode(QToolButton::InstantPopup);compact->addWidget(layoutButton);
     stereoText->setText(tr("Text & Bubbles"));compact->addAction(stereoText);auto textTool=stereoText;
     for(auto menuAction:menuBar()->actions())if(menuAction->menu() && menuAction->text()==tr("&Edit")){menuAction->menu()->addSeparator();menuAction->menu()->addAction(shapes);menuAction->menu()->addAction(textTool);}
-    auto guided=compact->addAction(tr("Guided Process"));guided->setObjectName("guidedProcessAction");connect(guided,&QAction::triggered,this,&MainWindow::startGuidedProcess);
+    auto guided=compact->addAction(style()->standardIcon(QStyle::SP_DialogHelpButton),tr("Guided Process"));guided->setObjectName("guidedProcessAction");guided->setToolTip(tr("Guided Process"));connect(guided,&QAction::triggered,this,&MainWindow::startGuidedProcess);
+    registerCommand(guided,tr("Help"));
+    compact->addAction(toggles[6]);
     // Widget controls stay in their sections: each is directly reachable from Main Menu.
     for(int i=0;i<sections.size();++i) {
         if(i==2){menus->addAction(windowDepth);continue;}
@@ -1115,7 +1262,7 @@ void MainWindow::createToolbar()
                 if(auto combo=qobject_cast<QComboBox *>(widget)) {
                     QString label=combo==brushMode ? tr("Selection Tool") : combo==brushBackground ? tr("Out-of-Frame Background") : tr("Add / Subtract");
                     auto choices=group->addMenu(label);
-                    for(int n=0;n<combo->count();++n){auto choice=choices->addAction(combo->itemText(n));connect(choice,&QAction::triggered,this,[combo,n]{combo->setCurrentIndex(n);QMetaObject::invokeMethod(combo,"activated",Qt::DirectConnection,Q_ARG(int,n));});}
+                    for(int n=0;n<combo->count();++n){auto choice=choices->addAction(combo->itemText(n));connect(choice,&QAction::triggered,this,[combo,n]{combo->setCurrentIndex(n);QMetaObject::invokeMethod(combo,"activated",Qt::DirectConnection,Q_ARG(int,n));});choice->setProperty("quickAccessId",QString("selection.combo%1.option%2").arg(combo==brushMode ? 0 : combo==brushBackground ? 1 : 2).arg(n));registerCommand(choice,label);}
                 } else if(auto spin=qobject_cast<QSpinBox *>(widget)) {
                     QString label=spin==frameDepth ? tr("Frame Point Depth") : spin==brushSize ? tr("Brush Size") : spin==colorTolerance ? tr("Color Tolerance") : tr("Background Opacity");
                     auto setValue=group->addAction(label+tr("…"));connect(setValue,&QAction::triggered,this,[this,spin,label]{bool ok=false;int value=QInputDialog::getInt(this,label,tr("Value"),spin->value(),spin->minimum(),spin->maximum(),spin->singleStep(),&ok);if(ok)spin->setValue(value);});
@@ -1125,10 +1272,15 @@ void MainWindow::createToolbar()
             } else group->addAction(action);
         }
     }
-    menus->addAction(selectionsDock->toggleViewAction());menus->addMenu(layoutMenu);menus->addAction(guided);menus->addAction(textTool);menus->addSeparator();menus->addAction(m_checkUpdatesAction);menus->addAction(about);
-    const QString historyKey="compactLayout/history";
-    selectionsDock->setVisible(preferences->value(historyKey,false).toBool());
-    connect(selectionsDock,&QDockWidget::visibilityChanged,this,[this,preferences,historyKey](bool shown){if(isVisible() && !isMinimized()) preferences->setValue(historyKey,shown);});
+    menus->addAction(quickToggle);menus->addAction(selectionsDock->toggleViewAction());menus->addMenu(layoutMenu);menus->addAction(guided);menus->addAction(textTool);menus->addSeparator();menus->addAction(m_checkUpdatesAction);menus->addAction(about);
+    viewMenu->addMenu(layoutMenu);
+    viewMenu->addAction(compact->toggleViewAction());
+    for(auto button:findChildren<QToolButton *>())if(auto action=button->defaultAction())quickAccess->attachButton(button,action->property("quickAccessId").toString());
+    quickAccess->restore();
+    if(!restoreState(preferences->value("drawerLayout/state").toByteArray(),1)) {
+        toggles[3]->setChecked(true);
+    }
+    m_restoringToolbox=false;
     refreshObjects();
 
 }

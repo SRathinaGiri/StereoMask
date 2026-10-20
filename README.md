@@ -1,14 +1,15 @@
-# StereoMask v2.3.0
+# StereoMask v2.4.0
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-Download the packaged Windows build from the [v2.3.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.3.0); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.4.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.0); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
 
-- **Workflow-oriented controls:** A compact Main Menu and collapsible File, View, Stereo Window, Create Frame, Edit Frame, Out-of-Frame and Help sections keep the canvas usable on smaller displays. Layout choices persist between sessions.
+- **Left-side toolbox drawers (new in v2.4.0):** A narrow icon rail replaces the stacked top toolbars. File, View, Create Frame, Edit Frame, Out-of-Frame and Help use 150-pixel command drawers with compact inputs and left-aligned borderless buttons. Dropdowns and Open Recent fill the usable drawer width. History uses a compact 240-pixel width for its object list. Click a drawer icon again to close it. Stereo Window and Text & Bubbles open their dialogs directly. Help is last, after Guided Process. One docked drawer opens at a time. Drag a drawer title bar to float it or move it to the other side. Floating drawers remain independent, controls scroll on smaller windows, and the layout is remembered. Hover compact controls for their full labels. View > Layout can close all drawers or reset the toolbox. Existing menus and shortcuts remain available.
+- **Quick Access favorites (new in v2.4.0):** Open the star drawer and use its manager to search for commands, add or remove favorites, and reorder them by dragging or with up/down buttons. Save commits the manager changes; Cancel leaves the list unchanged. Right-click any supported command button to add it directly, or right-click a favorite to move/remove it. Favorites retain the original enabled/checked states and dialogs. The list and order persist between sessions in layout.ini.
 - **Guided Process:** An optional step-by-step panel guides first-time users from opening an image through stereo-window setup, frame construction, foreground preservation, review, save and export without discarding existing work.
 - **History panel:** Applied foreground edits appear as ordered workflow objects with visibility, name, eye, Add/Subtract operation, point editing, movement, reordering and deletion. Undo/Redo continues to cover completed project edits.
 - **Creative frame tools:** Create editable rectangles, squares, circles and ovals; add flat, beveled or decorative picture-frame borders; and configure stereo-aware drop shadows.
@@ -33,6 +34,7 @@ Download the packaged Windows build from the [v2.3.0 release](https://github.com
 - **Synced appearance:** Mask color and Pick mask color edit the same value as Settings. The swatch and opacity follow Settings and loaded projects. Sampling does not switch export mode or change custom cutout color.
 - **Projects/export:** Editable .msk JSON, optional AutoSave, source-resolution PNG/JPEG output, outer padding and inter-eye gap. Export runs asynchronously and reports completion/failure.
 - **Stereo inspection:** Anaglyph honors composed physical-eye masks and the export appearance. Swap changes display order only; export stays left-eye/right-eye.
+- **Safety fixes (v2.4.0):** Mac-reviewed processing-panel ownership guards prevent invalid widget deletion when the host closes first. Panel creation avoids queued-command reentry; malformed project text entries are skipped, and old text caches clear on document changes. Fuzzy Select retains Windows eight-neighbor connectivity, including diagonals.
 - **Help/updates:** Bundled offline guide, manual Windows GitHub update checking, original-author credits and dependency notices.
 
 ## Quick Workflow
@@ -97,8 +99,9 @@ Canvas click-to-select applied polygons, selection groups and per-object feather
 
 - [Offline User Guide](docs/user-guide.html): workflows, tools, shortcuts and troubleshooting.
 - [Windows/Mac Comparison and Porting Checklist](docs/windows-mac-comparison.md): verified baseline, feature differences, source map, JSON compatibility and port order.
-- [Windows v2.3.0 to Mac R18 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
-- [v2.3.0 Release Notes](docs/release-notes-v2.3.0.md): text effects, progress feedback, navigation and frame-point fixes.
+- [Windows v2.4.0 to Mac R20 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [v2.4.0 Release Notes](docs/release-notes-v2.4.0.md): toolbox drawers, Quick Access and Mac-reviewed safety fixes.
+- [v2.3.0 Release Notes](docs/release-notes-v2.3.0.md): previous text effects, progress feedback, navigation and frame-point fixes.
 - [Mac Integration](docs/mac-integration.md): original import provenance.
 - [Credits](CREDITS.md): inspiration, collaborators and dependencies.
 
@@ -121,6 +124,6 @@ ctest --test-dir build --output-on-failure
 
 CMake uses the compatible OpenCV install at D:\vcpkg\installed\x64-mingw-dynamic when present; supply OpenCV_DIR for another install. Package the executable with Qt/MinGW/OpenCV DLLs, Qt plugins, README, credits, license, guide and dependency notices. Extract the complete ZIP, not only the executable. Help is also embedded in the app.
 
-Four CTest suites cover selection/geometry/export, creative tools, help/UI and update checking. Synthetic tests do not certify segmentation quality on every image or validate Mac packaging.
+Five CTest suites cover selection/geometry/export, creative tools, help/UI, update checking and Quick Access. Synthetic tests do not certify segmentation quality on every image or validate Mac packaging.
 
 The application version is defined in `appversion.h`. CMake reads it for project/bundle metadata, and runtime titles, About, splash and update checks use the same constant. Public release notes and `updates.json` describe the published release and are updated during release preparation.

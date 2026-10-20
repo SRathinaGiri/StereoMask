@@ -71,6 +71,8 @@ private slots:
     void openRecentFile();
 
 private:
+    void closeEvent(QCloseEvent *event) override;
+    bool m_restoringToolbox = true;
     void createMenus();
     void createToolbar();
     void setupConnections();

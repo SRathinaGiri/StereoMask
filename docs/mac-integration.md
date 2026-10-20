@@ -27,6 +27,8 @@ Synthetic integration checks do not establish AutoMask accuracy on all photograp
 
 The current feature inventory and controls are in [README](../README.md) and the [User Guide](user-guide.html). The complete source-backed difference list against fetched Mac R10 is in [Windows/Mac Comparison and Porting Checklist](windows-mac-comparison.md), including object state, ordering/frame holes, paired alignment, gestures, preview/export parity, schema compatibility and Mac-specific cautions. This original-import record is not a claim that those later Windows changes already exist in Mac.
 
+For Windows v2.4.0 versus Mac R20, use the [current Windows-to-Mac handoff](windows-to-mac-handoff.md). Mac R19 has adopted the principal Windows v2.3.0 features. Windows v2.4.0 reciprocally adopts its processing lifetime, malformed-text and cache-cleanup fixes; the older R10 comparison remains historical.
+
 ## Update Metadata
 
 Windows update metadata is in updates.json. Keep appversion.h, CMake's project version and the metadata version consistent when publishing. The checker only opens the trusted Windows GitHub page after a user action; it never installs a download.
