@@ -1,12 +1,15 @@
-# StereoMask v2.4.1
+# StereoMask v2.5.0
 
 StereoMask is a Qt 6 application for framing side-by-side stereo photographs and letting selected foreground objects extend outside the stereo window. It edits existing stereo pairs; it does not convert a flat photograph into 3D.
 
 ![StereoMask v2.1.0 screenshot](Screenshot2.1.jpg)
 
-Download the packaged Windows build from the [v2.4.1 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.1); extract the complete ZIP before running StereoMask.exe.
+Download the packaged Windows build from the [v2.5.0 release](https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.5.0); extract the complete ZIP before running StereoMask.exe.
 
 ## Current Features
+
+- **Alignment grids (new in v2.5.0):** View > Show Grid (Ctrl+G) overlays matching source-image grids in both eyes. Grid Settings controls horizontal/vertical line counts (0-100), single- or two-color contrast and opacity. The grid follows pan/zoom, works in anaglyph, is hidden in Clean Preview and never enters export. Grid preferences are saved locally, not in projects.
+- **Three-band Outline Frame (new in v2.5.0):** Edit Frame > Outline Frame adds inner/middle/outer colored bands outside the main frame contour, with a source-pixel gap and independent widths/colors. Each band can follow the current mask color. The outline follows each eye's disparity and curves; preserved foreground covers it. Apply and Display in editor are separate: Clean Preview/export include applied outlines even when editor display is off. Settings are undoable and saved in projects; older projects default to no outline. Existing picture borders/shadows remain independent, and all bands are clipped to the existing canvas. Inspired by the original Stereomasken controls.
 
 - **Left-side toolbox drawers (new in v2.4.0):** A narrow icon rail replaces the stacked top toolbars. File, View, Create Frame, Edit Frame, Out-of-Frame and Help use 150-pixel command drawers with compact inputs and left-aligned borderless buttons. Dropdowns and Open Recent fill the usable drawer width. History uses a compact 240-pixel width for its object list. Click a drawer icon again to close it. Stereo Window and Text & Bubbles open their dialogs directly. Help is last, after Guided Process. One docked drawer opens at a time. Drag a drawer title bar to float it or move it to the other side. Floating drawers remain independent, controls scroll on smaller windows, and the layout is remembered. Hover compact controls for their full labels. View > Layout can close all drawers or reset the toolbox. Existing menus and shortcuts remain available.
 - **Quick Access favorites (new in v2.4.0):** Open the star drawer and use its manager to search for commands, add or remove favorites, and reorder them by dragging or with up/down buttons. Save commits the manager changes; Cancel leaves the list unchanged. Right-click any supported command button to add it directly, or right-click a favorite to move/remove it. Favorites retain the original enabled/checked states and dialogs. The list and order persist between sessions in layout.ini.
@@ -76,6 +79,7 @@ Preview Feather softens the frame boundary in Match preview and its export when 
 | Delete / Backspace during lasso editing | Remove last anchor and reopen outline |
 | Escape | Cancel open lasso; apply closed lasso; cancel color picking |
 | F8 | Toggle Clean Preview |
+| Ctrl+G | Toggle the editor-only alignment grid |
 | Arrow / Shift+Arrow | Scroll both eyes / scroll farther |
 | Ctrl+0 / Ctrl+Plus or Equals / Ctrl+Minus | Fit / zoom in / zoom out |
 | Wheel / Shift+wheel / Ctrl+wheel | In frame-point and lasso editing: vertical scroll / horizontal scroll / pointer-centered zoom. Other tools retain wheel zoom. |
@@ -99,7 +103,8 @@ Canvas click-to-select applied polygons, selection groups and per-object feather
 
 - [Offline User Guide](docs/user-guide.html): workflows, tools, shortcuts and troubleshooting.
 - [Windows/Mac Comparison and Porting Checklist](docs/windows-mac-comparison.md): verified baseline, feature differences, source map, JSON compatibility and port order.
-- [Windows v2.4.1 to Mac R20 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [Windows v2.5.0 to Mac R20 Handoff](docs/windows-to-mac-handoff.md): current reciprocal feature delta, source map, JSON compatibility and validation checklist.
+- [v2.5.0 Release Notes](docs/release-notes-v2.5.0.md): alignment grids and three-band outline frames.
 - [v2.4.1 Release Notes](docs/release-notes-v2.4.1.md): shared application/help version and version-specific help cache.
 - [v2.4.0 Release Notes](docs/release-notes-v2.4.0.md): toolbox drawers, Quick Access and Mac-reviewed safety fixes.
 - [v2.3.0 Release Notes](docs/release-notes-v2.3.0.md): previous text effects, progress feedback, navigation and frame-point fixes.

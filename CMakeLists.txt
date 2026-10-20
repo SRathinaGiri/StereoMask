@@ -58,6 +58,7 @@ add_executable(StereoMask
     quickaccess.cpp
     quickaccess.h
     creativetools.cpp
+    workspacecontrols.cpp
     guidedprocess.cpp
     keyboardshortcuts.cpp
     decorations.cpp
@@ -133,7 +134,7 @@ if(STEREOMASK_BUILD_TESTS)
     target_link_libraries(StereoMaskSmartTest PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Concurrent Qt6::Network ${OpenCV_LIBS})
     add_test(NAME smart-selection COMMAND StereoMaskSmartTest)
     set_tests_properties(smart-selection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    add_executable(StereoMaskHelpTest tests/help_test.cpp mainwindow.cpp mainwindow.h quickaccess.cpp quickaccess.h creativetools.cpp guidedprocess.cpp keyboardshortcuts.cpp decorations.cpp updatechecker.cpp updatechecker.h
+    add_executable(StereoMaskHelpTest tests/help_test.cpp mainwindow.cpp mainwindow.h quickaccess.cpp quickaccess.h creativetools.cpp workspacecontrols.cpp guidedprocess.cpp keyboardshortcuts.cpp decorations.cpp updatechecker.cpp updatechecker.h
         smartselection.cpp stereoviewwidget.cpp stereoviewwidget.h
         stereoimageprocessor.cpp undocommand.cpp undocommand.h "${STEREOMASK_RESOURCE_FILE}")
     target_include_directories(StereoMaskHelpTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})

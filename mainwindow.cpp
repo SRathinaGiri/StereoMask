@@ -452,6 +452,11 @@ static QIcon customIcon(const QString &name)
             star.append(QPointF(32+std::cos(angle)*radius,32+std::sin(angle)*radius));
         }
         p.setPen(QPen(ink,3));p.setBrush(QColor("#facc15"));p.drawPolygon(star);
+    } else if (name == "grid") {
+        for(int coordinate:{18,32,46}) {line({double(coordinate),12},{double(coordinate),52},blue,3);line({12,double(coordinate)},{52,double(coordinate)},green,3);}
+    } else if (name == "outlineFrame") {
+        p.setBrush(Qt::NoBrush);p.setPen(QPen(blue,3));p.drawRect(12,16,40,32);
+        p.setPen(QPen(green,3));p.drawRect(18,22,28,20);p.setPen(QPen(ink,2));p.drawRect(23,27,18,10);
     } else if (name == "export") {
         p.setPen(QPen(ink, 4)); p.setBrush(QColor("#dcfce7")); p.drawRect(13, 18, 38, 28);
         arrow({25, 32}, {45, 32}, green);
@@ -743,6 +748,8 @@ void MainWindow::createToolbar()
     QAction *pictureFrame=addToolAction(maskBar,customIcon("polygon"),tr("Picture Frame"),tr("Add a colored flat, beveled or decorative border to your frame"));
     pictureFrame->setObjectName("pictureFrameAction");
     connect(pictureFrame,&QAction::triggered,this,&MainWindow::adjustPictureFrame);
+    auto outlineFrame=addToolAction(maskBar,customIcon("outlineFrame"),tr("Outline Frame"),tr("Three-band outline outside the frame contour, with source-pixel offset, colors and widths"));
+    outlineFrame->setObjectName("outlineFrameAction");connect(outlineFrame,&QAction::triggered,this,&MainWindow::adjustOutlineFrame);
     QAction *frameShapes=addToolAction(maskBar,customIcon("autoMask"),tr("Frame Shapes"),tr("Create a Rectangle, Square, Oval or Circle frame"));
     frameShapes->setObjectName("frameShapesAction");
     connect(frameShapes,&QAction::triggered,this,&MainWindow::createFrameShape);
@@ -1091,6 +1098,13 @@ void MainWindow::createToolbar()
         QSignalBlocker blocker(movePolygon);movePolygon->setChecked(enabled);
     });
     QMenu *viewMenu=menuBar()->addMenu(tr("&View"));
+    auto gridToggle=new QAction(customIcon("grid"),tr("Show Grid"),this);gridToggle->setObjectName("showGridAction");gridToggle->setCheckable(true);gridToggle->setShortcut(QKeySequence(Qt::CTRL|Qt::Key_G));
+    gridToggle->setToolTip(tr("Toggle the image-aligned editor grid (Ctrl+G). Hidden in Clean Preview; never exported."));
+    auto gridSettingsAction=new QAction(customIcon("settings"),tr("Grid Settings"),this);gridSettingsAction->setObjectName("gridSettingsAction");
+    connect(gridSettingsAction,&QAction::triggered,this,&MainWindow::adjustGrid);
+    connect(gridToggle,&QAction::toggled,this,[this](bool enabled){auto grid=m_viewWidget->gridSettings();grid.enabled=enabled;m_viewWidget->setGridSettings(grid);});
+    connect(m_viewWidget,&StereoViewWidget::gridSettingsChanged,gridToggle,[this,gridToggle]{QSignalBlocker block(gridToggle);gridToggle->setChecked(m_viewWidget->gridSettings().enabled);});
+    viewMenu->addAction(gridToggle);viewMenu->addAction(gridSettingsAction);
     viewMenu->addAction(maskPreview); viewMenu->addAction(cleanPreview); viewMenu->addAction(selectionsDock->toggleViewAction());
     // Regroup existing actions without duplicating their handlers or tool state.
     const auto brushActions=brushBar->actions();
@@ -1102,7 +1116,7 @@ void MainWindow::createToolbar()
     populate(fileViewBar,{newAction,openAction,m_recentFilesMenu->menuAction(),findChild<QAction *>("closeProjectAction"),saveAction,exportAction});
     findChild<QAction *>("closeProjectAction")->setText(tr("Close"));
     navigationBar->setWindowTitle(tr("View"));
-    populate(navigationBar,{fit,zoomIn,zoomOut,pan,swap,anaglyph,maskPreview,cleanPreview,previewFeather});
+    populate(navigationBar,{fit,zoomIn,zoomOut,pan,swap,anaglyph,maskPreview,cleanPreview,previewFeather,gridToggle,gridSettingsAction});
     editMaskBar->setWindowTitle(tr("Edit Frame"));
     auto editFrame=editMaskBar->addAction(tr("Edit points"));editFrame->setObjectName("editFramePointsAction");
     auto enterFrame=[this,brushMode,pan,anaglyph,freehand] {
@@ -1116,7 +1130,7 @@ void MainWindow::createToolbar()
     addFramePoint->setToolTip(tr("Click to enter frame editing, then right-click an existing frame edge away from a dot. Left-drag the new dot into place. Existing dots remain."));
     connect(addFramePoint,&QAction::triggered,this,enterFrame);
     deleteSelected->setText(tr("Delete Point"));deleteSelected->setToolTip(tr("Select frame dots with a left-click (Ctrl-click for multiple dots), then click Delete Point or press Delete. Undo restores them. While editing a lasso, Delete removes its latest segment."));
-    populate(editMaskBar,{undo,redo,deleteSelected,clear,alignLeft,alignRight,alignTop,alignBottom,alignDepth,pictureFrame,lockH,lockV,snap});
+    populate(editMaskBar,{undo,redo,deleteSelected,clear,alignLeft,alignRight,alignTop,alignBottom,alignDepth,pictureFrame,outlineFrame,lockH,lockV,snap});
     transformBar->setWindowTitle(tr("Edit Frame transforms"));
     addToolGroupLabel(transformBar,tr("Scale"));populate(transformBar,{scaleUp,scaleDown});transformBar->addSeparator();
     addToolGroupLabel(transformBar,tr("Move"));populate(transformBar,{shiftLeft,shiftRight,shiftUp,shiftDown});transformBar->addSeparator();
@@ -1143,6 +1157,17 @@ void MainWindow::createToolbar()
     auto menus=new QMenu(this);menus->setObjectName("mainControlsMenu");
     auto menuButton=new QToolButton(compact);menuButton->setText(tr("Main Menu"));menuButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogListView));menuButton->setToolTip(tr("Main Menu"));menuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);menuButton->setMenu(menus);menuButton->setPopupMode(QToolButton::InstantPopup);compact->addWidget(menuButton);
     auto preferences=new QSettings(QFileInfo(settingsFilePath()).dir().filePath("layout.ini"),QSettings::IniFormat,this);
+    GridSettings grid;
+    grid.enabled=preferences->value("workspace/grid/enabled",false).toBool();grid.twoColors=preferences->value("workspace/grid/twoColors",false).toBool();
+    grid.horizontal=preferences->value("workspace/grid/horizontal",10).toInt();grid.vertical=preferences->value("workspace/grid/vertical",10).toInt();grid.opacity=preferences->value("workspace/grid/opacity",70).toInt();
+    grid.first=QColor(preferences->value("workspace/grid/first","#808080").toString());grid.second=QColor(preferences->value("workspace/grid/second","#000000").toString());
+    m_viewWidget->setGridSettings(grid);
+    connect(m_viewWidget,&StereoViewWidget::gridSettingsChanged,this,[this,preferences] {
+        const auto grid=m_viewWidget->gridSettings();
+        preferences->setValue("workspace/grid/enabled",grid.enabled);preferences->setValue("workspace/grid/twoColors",grid.twoColors);
+        preferences->setValue("workspace/grid/horizontal",grid.horizontal);preferences->setValue("workspace/grid/vertical",grid.vertical);preferences->setValue("workspace/grid/opacity",grid.opacity);
+        preferences->setValue("workspace/grid/first",grid.first.name(QColor::HexArgb));preferences->setValue("workspace/grid/second",grid.second.name(QColor::HexArgb));
+    });
     QList<QDockWidget *> drawers;
     const QList<QIcon> drawerIcons={newAction->icon(),pan->icon(),windowDepth->icon(),shapes->icon(),editFrame->icon().isNull() ? curve->icon() : editFrame->icon(),freehand->icon(),help->icon()};
     QList<QAction *> toggles;

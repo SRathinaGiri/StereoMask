@@ -1,6 +1,6 @@
 {
-  "version": "2.4.1",
-  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.4.1",
+  "version": "2.5.0",
+  "page_url": "https://github.com/SRathinaGiri/StereoMask/releases/tag/v2.5.0",
   "package_type": "app",
-  "notes": "Windows v2.4.1 makes appversion.h the single source for the window title, startup banner, About, update checking and generated User Guide. Help uses a version-specific browser cache path to avoid older help pages. Includes all v2.4.0 toolbox, Quick Access and safety improvements."
+  "notes": "Windows v2.5.0 restores Stereomasken-inspired alignment grids and three-band outline frames. Grids have per-axis line counts, colors and opacity and never enter exports. Outline bands follow each eye's frame/disparity, respect foreground protrusions, and support independent widths/colors, editor visibility, Undo and project saving. Includes all v2.4.1 version-consistency and toolbox improvements."
 }

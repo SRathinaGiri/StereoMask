@@ -97,8 +97,56 @@ int main(int argc, char **argv)
                                                   view.openingMask(false), shadow);
     require(qAlpha(layer.pixel(210, 100)) == 255 && qAlpha(layer.pixel(100, 100)) == 0,
             "shadow exterior only");
+    {
+        QImage gridImage(160,160,QImage::Format_RGB32);gridImage.fill(Qt::white);
+        GridSettings grid;grid.enabled=true;grid.horizontal=grid.vertical=1;grid.opacity=100;grid.first=Qt::magenta;
+        {QPainter painter(&gridImage);StereoViewWidget::paintAlignmentGrid(painter,QRectF(20,20,100,100),grid);}
+        require(gridImage.pixelColor(70,40)==QColor(Qt::magenta) && gridImage.pixelColor(40,70)==QColor(Qt::magenta)
+                && gridImage.pixelColor(10,70)==QColor(Qt::white),"grid positions and image clipping");
+        grid.twoColors=true;grid.second=Qt::cyan;
+        {QPainter painter(&gridImage);StereoViewWidget::paintAlignmentGrid(painter,QRectF(20,20,100,100),grid);}
+        int primary=0,secondary=0;for(int y=25;y<65;++y){primary+=gridImage.pixelColor(70,y)==QColor(Qt::magenta);secondary+=gridImage.pixelColor(70,y)==QColor(Qt::cyan);}
+        require(primary>0 && secondary>0,"two-color grid retains both contrast colors");
+        const auto exported=view.exportEye(false);const int undoCount=view.undoStack()->count();
+        view.resize(720,300);view.show();app.processEvents();view.setGridSettings(grid);const auto shown=view.grab().toImage();
+        grid.enabled=false;view.setGridSettings(grid);const auto hidden=view.grab().toImage();
+        require(shown!=hidden && view.exportEye(false)==exported && view.undoStack()->count()==undoCount,"grid is a view-only overlay, not exported or undoable");
+        view.setCleanPreviewEnabled(true);const auto clean=view.grab().toImage();grid.enabled=true;view.setGridSettings(grid);
+        require(view.grab().toImage()==clean,"Clean Preview hides alignment grids");
+        grid.enabled=false;view.setGridSettings(grid);view.setCleanPreviewEnabled(false);view.hide();
+    }
+    auto outline=shadow;outline.outlineEnabled=true;outline.outlineOffset=6;
+    outline.outlineInnerWidth=3;outline.outlineMiddleWidth=4;outline.outlineOuterWidth=2;
+    outline.outlineInnerColor=Qt::red;outline.outlineMiddleColor=Qt::green;outline.outlineOuterColor=Qt::blue;
+    const auto outlineLeft=StereoViewWidget::outlineFrameOverlay(QSize(360,240),view.points(),false,view.openingMask(false),outline,Qt::black);
+    const auto outlineRight=StereoViewWidget::outlineFrameOverlay(QSize(360,240),view.points(),true,view.openingMask(true),outline,Qt::black);
+    require(qAlpha(outlineLeft.pixel(203,100))==0 && outlineLeft.pixelColor(207,100)==QColor(Qt::red)
+            && outlineLeft.pixelColor(211,100)==QColor(Qt::green) && outlineLeft.pixelColor(214,100)==QColor(Qt::blue)
+            && qAlpha(outlineLeft.pixel(217,100))==0,"three outline bands and gap in source pixels");
+    require(outlineRight.pixelColor(197,100)==QColor(Qt::red) && qAlpha(outlineLeft.pixel(100,100))==0,"outline follows per-eye disparity outside the frame");
+    auto outlineForeground=view.openingMask(false);{QPainter painter(&outlineForeground);painter.fillRect(202,90,16,20,Qt::white);}
+    const auto coveredOutline=StereoViewWidget::outlineFrameOverlay(QSize(360,240),view.points(),false,outlineForeground,outline,Qt::black);
+    require(qAlpha(coveredOutline.pixel(207,100))==0 && qAlpha(coveredOutline.pixel(214,100))==0,"foreground protrusions cover outline bands");
+    outline.outlineDisplay=false;view.setPictureFrameSettings(outline);
+    require(view.exportEye(false).pixelColor(207,100)==QColor(Qt::red) && view.exportEye(false,true,true).pixelColor(207,100)!=QColor(Qt::red),"editor-only visibility must not remove exported outline");
+    view.undoStack()->undo();require(!view.pictureFrameSettings().outlineEnabled,"outline settings undo");
+    view.undoStack()->redo();require(view.pictureFrameSettings()==outline,"outline settings redo");
+    auto changed=outline;changed.outlineInnerColor=Qt::yellow;view.setPictureFrameSettings(changed);
+    require(view.exportEye(false).pixelColor(207,100)==QColor(Qt::yellow),"outline color changes invalidate composed cache");
+    view.undoStack()->undo();
 
     StereoText text;
+    changed=outline;changed.outlineMiddleWidth=0;
+    const auto omitted=StereoViewWidget::outlineFrameOverlay(QSize(360,240),view.points(),false,view.openingMask(false),changed,Qt::black);
+    require(omitted.pixelColor(210,100)==QColor(Qt::blue) && qAlpha(omitted.pixel(214,100))==0,"zero width omits an outline band");
+    changed=outline;changed.outlineInnerBackground=true;view.setPictureFrameSettings(changed);
+    view.setMaskSettings(Qt::magenta,1.0f);require(view.exportEye(false).pixelColor(207,100)==QColor(Qt::magenta),"outline band can follow mask color");
+    view.setMaskSettings(Qt::cyan,1.0f);require(view.exportEye(false).pixelColor(207,100)==QColor(Qt::cyan),"mask color invalidates cached outline");
+    view.undoStack()->undo();
+    view.replaceFramePoints(shapePoints(2,bounds,10));
+    const auto curvedOutline=StereoViewWidget::outlineFrameOverlay(QSize(360,240),view.points(),false,view.openingMask(false),outline,Qt::black);
+    require(qAlpha(curvedOutline.pixel(130,32))>0 && qAlpha(curvedOutline.pixel(54,34))==0,"outline follows curved frame rather than bounding rectangle");
+    view.undoStack()->undo();
     text.id = "fixture";
     text.rect = QRectF(20, 20, 100, 80);
     text.tail = QPointF(40, 140);
@@ -209,6 +257,9 @@ int main(int argc, char **argv)
     require(loaded.textObjects().size() == 1 && loaded.pictureFrameSettings().shadowEnabled,
             "project keeps decorations");
     require(loaded.textObjects().first().relief==2 && loaded.textObjects().first().tiltX==20,"project keeps text relief and tilt");
+    require(loaded.pictureFrameSettings().outlineEnabled && !loaded.pictureFrameSettings().outlineDisplay
+            && loaded.pictureFrameSettings().outlineOffset==6 && loaded.pictureFrameSettings().outlineMiddleWidth==4
+            && loaded.pictureFrameSettings().outlineInnerColor==QColor(Qt::red),"project preserves independent outline settings");
     {
         QFile project(folder.path()+"/source.msk");require(project.open(QIODevice::ReadOnly),"read project fixture");
         auto object=QJsonDocument::fromJson(project.readAll()).object();

@@ -637,14 +637,18 @@ SelectionState StereoViewWidget::selectionState() const {
     return {m_selectionObjects,m_baseRevealLeft,m_baseRevealRight,m_baseOutlineLeft,m_baseOutlineRight};
 }
 
-QImage StereoViewWidget::exportEye(bool right, bool includeText) const {
+QImage StereoViewWidget::exportEye(bool right, bool includeText, bool editor) const {
     const QImage image=right ? m_processor.rightImage() : m_processor.leftImage();
     QByteArray key;QDataStream stream(&key,QIODevice::WriteOnly);
     stream<<image.cacheKey()<<m_smartRevision<<m_revealLeft.cacheKey()<<m_revealRight.cacheKey()
           <<m_pictureFrame.enabled<<m_pictureFrame.width<<m_pictureFrame.style<<m_pictureFrame.color
           <<m_pictureFrame.shadowEnabled<<m_pictureFrame.shadowOpacity<<m_pictureFrame.shadowDistance
           <<m_pictureFrame.shadowAngle<<m_pictureFrame.shadowBlur<<m_pictureFrame.shadowSpread<<m_pictureFrame.shadowColor
-          <<includeText
+          <<m_pictureFrame.outlineEnabled<<m_pictureFrame.outlineDisplay<<m_pictureFrame.outlineOffset
+          <<m_pictureFrame.outlineInnerWidth<<m_pictureFrame.outlineMiddleWidth<<m_pictureFrame.outlineOuterWidth
+          <<m_pictureFrame.outlineInnerColor<<m_pictureFrame.outlineMiddleColor<<m_pictureFrame.outlineOuterColor
+          <<m_pictureFrame.outlineInnerBackground<<m_pictureFrame.outlineMiddleBackground<<m_pictureFrame.outlineOuterBackground
+          <<includeText<<editor
           <<m_cutout<<m_cutoutBackground<<m_cutoutColor<<m_maskColor<<m_maskOpacity<<m_featherAmount<<m_previewFeatherEnabled;
     if(includeText) for(const auto &text:m_textObjects)stream<<QJsonDocument(textToJson(text)).toJson(QJsonDocument::Compact);
     for (const auto &point:m_points)
@@ -662,6 +666,9 @@ QImage StereoViewWidget::exportEye(bool right, bool includeText) const {
     if (m_pictureFrame.enabled && m_points.size()>=3) {
         QPainter framePainter(&cached);
         framePainter.drawImage(0,0,pictureFrameOverlay(image.size(),m_points,right,openingMask(right),m_pictureFrame));
+    }
+    if(m_pictureFrame.outlineEnabled && (!editor || m_pictureFrame.outlineDisplay) && m_points.size()>=3) {
+        QPainter painter(&cached);painter.drawImage(0,0,cachedOutlineFrame(right));
     }
     if(includeText && !m_textObjects.isEmpty()) {
         QPainter painter(&cached);painter.drawImage(0,0,cachedTextOverlay(right));
@@ -1087,6 +1094,18 @@ void StereoViewWidget::loadBrushSettings(const QJsonObject &obj) {
     m_pictureFrame.shadowBlur=qBound(0,frame["shadowBlur"].toInt(12),200);
     m_pictureFrame.shadowSpread=qBound(0,frame["shadowSpread"].toInt(0),200);
     const QColor shadowColor(frame["shadowColor"].toString("#000000"));if(shadowColor.isValid())m_pictureFrame.shadowColor=shadowColor;
+    const auto outline=frame["outline"].toObject();
+    clearOutlineCache();
+    m_pictureFrame.outlineEnabled=outline["enabled"].toBool(false);m_pictureFrame.outlineDisplay=outline["displayInEditor"].toBool(true);
+    m_pictureFrame.outlineOffset=qBound(0,outline["offset"].toInt(20),1000);
+    const auto readBand=[&](const char *key,int &width,QColor &color,bool &background) {
+        const auto band=outline[key].toObject();width=qBound(0,band["width"].toInt(width),1000);
+        const QColor parsed(band["color"].toString());if(parsed.isValid())color=parsed;
+        background=band["useMaskColor"].toBool(false);
+    };
+    readBand("inner",m_pictureFrame.outlineInnerWidth,m_pictureFrame.outlineInnerColor,m_pictureFrame.outlineInnerBackground);
+    readBand("middle",m_pictureFrame.outlineMiddleWidth,m_pictureFrame.outlineMiddleColor,m_pictureFrame.outlineMiddleBackground);
+    readBand("outer",m_pictureFrame.outlineOuterWidth,m_pictureFrame.outlineOuterColor,m_pictureFrame.outlineOuterBackground);
     const auto texts=obj["stereoText"].toArray();for(int i=0;i<qMin(100,texts.size());++i)if(texts[i].isObject())m_textObjects.append(textFromJson(texts[i].toObject(),m_processor.leftImage().size()));
     cancelLasso();
     m_completedLeft=decodeLassoPath(obj["lassoOutlineLeft"].toObject());
@@ -1147,6 +1166,7 @@ bool StereoViewWidget::closeProject()
     m_textObjects.clear();
     m_textKeyLeft.clear();m_textKeyRight.clear();m_textCacheLeft=QImage();m_textCacheRight=QImage();
     m_pictureFrame = PictureFrameSettings{};
+    clearOutlineCache();
     m_exportKeyLeft.clear();
     m_exportKeyRight.clear();
     m_exportCacheLeft = QImage();
@@ -1197,6 +1217,7 @@ bool StereoViewWidget::loadImage(const QString &fileName)
     if (loaded.first) {
         m_processor=loaded.second;
         m_operationProgress->setStage(tr("Restoring image settings and selections…"));
+        clearOutlineCache();
         m_textObjects.clear();m_textKeyLeft.clear();m_textKeyRight.clear();m_textCacheLeft=QImage();m_textCacheRight=QImage();m_pictureFrame=PictureFrameSettings{};
         m_selectionObjects.clear(); m_baseRevealLeft=QImage(); m_baseRevealRight=QImage();
         m_baseOutlineLeft=QPainterPath(); m_baseOutlineRight=QPainterPath();
@@ -1279,6 +1300,15 @@ bool StereoViewWidget::saveProject()
         {"shadowDistance",m_pictureFrame.shadowDistance},{"shadowAngle",m_pictureFrame.shadowAngle},
         {"shadowBlur",m_pictureFrame.shadowBlur},{"shadowSpread",m_pictureFrame.shadowSpread},
         {"shadowColor",m_pictureFrame.shadowColor.name(QColor::HexArgb)}};
+    const auto bandJson=[](int width,const QColor &color,bool background) {
+        return QJsonObject{{"width",width},{"color",color.name(QColor::HexArgb)},{"useMaskColor",background}};
+    };
+    auto frameJson=obj["pictureFrame"].toObject();
+    frameJson["outline"]=QJsonObject{{"enabled",m_pictureFrame.outlineEnabled},{"displayInEditor",m_pictureFrame.outlineDisplay},{"offset",m_pictureFrame.outlineOffset},
+        {"inner",bandJson(m_pictureFrame.outlineInnerWidth,m_pictureFrame.outlineInnerColor,m_pictureFrame.outlineInnerBackground)},
+        {"middle",bandJson(m_pictureFrame.outlineMiddleWidth,m_pictureFrame.outlineMiddleColor,m_pictureFrame.outlineMiddleBackground)},
+        {"outer",bandJson(m_pictureFrame.outlineOuterWidth,m_pictureFrame.outlineOuterColor,m_pictureFrame.outlineOuterBackground)}};
+    obj["pictureFrame"]=frameJson;
     QJsonArray texts;for(const auto &text:m_textObjects)texts.append(textToJson(text));obj["stereoText"]=texts;obj["stereoTextVersion"]=1;
     obj["lassoOutlineLeft"]=encodeLassoPath(m_completedLeft);
     obj["lassoOutlineRight"]=encodeLassoPath(m_completedRight);
@@ -1483,8 +1513,15 @@ void StereoViewWidget::updateAnaglyphIfActive()
 {
     if (m_anaglyphMode && m_processor.isValid()) {
         const bool preview=m_maskPreviewEnabled || m_cleanPreviewEnabled;
-        m_processor.createAnaglyphFromEyes((preview || !m_textObjects.isEmpty()) ? exportEye(false) : m_processor.leftImage(),
-                                          (preview || !m_textObjects.isEmpty()) ? exportEye(true) : m_processor.rightImage(),m_swapSides);
+        const auto eye=[&](bool right) {
+            if(preview || !m_textObjects.isEmpty())return exportEye(right,true,!m_cleanPreviewEnabled);
+            QImage image=right ? m_processor.rightImage() : m_processor.leftImage();
+            if(m_pictureFrame.outlineEnabled && m_pictureFrame.outlineDisplay) {
+                QPainter painter(&image);painter.drawImage(0,0,cachedOutlineFrame(right));
+            }
+            return image;
+        };
+        m_processor.createAnaglyphFromEyes(eye(false),eye(true),m_swapSides);
     }
 }
 
@@ -2204,7 +2241,7 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
         float sh = img.height() * scale;
         QRectF target(v.center().x() - sw/2.0 + m_panOffset.x()*scale, v.center().y() - sh/2.0 + m_panOffset.y()*scale, sw, sh);
         if (!m_anaglyphMode && (m_maskPreviewEnabled || m_cleanPreviewEnabled)) {
-            const QImage rendered=exportEye(isRight);
+            const QImage rendered=exportEye(isRight,true,!m_cleanPreviewEnabled);
             if (m_cutout && m_cutoutBackground==0) {
                 QPixmap checker(16,16);checker.fill(QColor(220,220,220));
                 QPainter tiles(&checker);tiles.fillRect(0,0,8,8,Qt::white);tiles.fillRect(8,8,8,8,Qt::white);tiles.end();
@@ -2213,10 +2250,13 @@ void StereoViewWidget::paintEvent(QPaintEvent *event)
             painter.drawImage(target,rendered);
         } else {
             painter.drawImage(target,img);
+            if(!m_anaglyphMode && m_pictureFrame.outlineEnabled && m_pictureFrame.outlineDisplay)
+                painter.drawImage(target,cachedOutlineFrame(isRight));
             if(!m_anaglyphMode && !m_textObjects.isEmpty())
                 painter.drawImage(target,cachedTextOverlay(isRight));
         }
         if (m_cleanPreviewEnabled) { painter.restore(); return; }
+        paintAlignmentGrid(painter,target,m_grid);
         const QImage reveal = revealMask(isRight);
         if (!m_anaglyphMode && !m_maskPreviewEnabled && !reveal.isNull()) {
             QImage &tint = isRight ? m_revealTintRight : m_revealTintLeft;
@@ -3161,6 +3201,80 @@ void StereoViewWidget::applyStereoWindowOffset(int pixels)
     if (m_autoSave) saveProject();
 }
 
+void StereoViewWidget::setGridSettings(GridSettings settings)
+{
+    settings.horizontal=qBound(0,settings.horizontal,100);settings.vertical=qBound(0,settings.vertical,100);
+    settings.opacity=qBound(0,settings.opacity,100);
+    if(!settings.first.isValid())settings.first=QColor("#808080");
+    if(!settings.second.isValid())settings.second=Qt::black;
+    m_grid=settings;update();emit gridSettingsChanged();
+}
+
+void StereoViewWidget::paintAlignmentGrid(QPainter &painter,const QRectF &imageRect,const GridSettings &settings)
+{
+    if(!settings.enabled || imageRect.isEmpty() || settings.opacity<=0)return;
+    painter.save();painter.setClipRect(imageRect,Qt::IntersectClip);
+    painter.setRenderHint(QPainter::Antialiasing,false);
+    painter.setOpacity(painter.opacity()*qBound(0,settings.opacity,100)/100.0);
+    const auto lines=[&] {
+        const int horizontal=qBound(0,settings.horizontal,100),vertical=qBound(0,settings.vertical,100);
+        for(int i=1;i<=horizontal;++i) {
+            const qreal y=imageRect.top()+imageRect.height()*i/(horizontal+1);
+            painter.drawLine(QPointF(imageRect.left(),y),QPointF(imageRect.right(),y));
+        }
+        for(int i=1;i<=vertical;++i) {
+            const qreal x=imageRect.left()+imageRect.width()*i/(vertical+1);
+            painter.drawLine(QPointF(x,imageRect.top()),QPointF(x,imageRect.bottom()));
+        }
+    };
+    QPen pen(settings.first,1);pen.setCosmetic(true);painter.setPen(pen);lines();
+    if(settings.twoColors){pen.setColor(settings.second);pen.setStyle(Qt::DashLine);painter.setPen(pen);lines();}
+    painter.restore();
+}
+
+QImage StereoViewWidget::cachedOutlineFrame(bool right) const
+{
+    const QImage source=right ? m_processor.rightImage() : m_processor.leftImage();
+    QByteArray key;QDataStream stream(&key,QIODevice::WriteOnly);
+    stream<<source.cacheKey()<<m_smartRevision<<m_revealLeft.cacheKey()<<m_revealRight.cacheKey()<<m_maskColor
+          <<m_pictureFrame.outlineEnabled<<m_pictureFrame.outlineOffset
+          <<m_pictureFrame.outlineInnerWidth<<m_pictureFrame.outlineMiddleWidth<<m_pictureFrame.outlineOuterWidth
+          <<m_pictureFrame.outlineInnerColor<<m_pictureFrame.outlineMiddleColor<<m_pictureFrame.outlineOuterColor
+          <<m_pictureFrame.outlineInnerBackground<<m_pictureFrame.outlineMiddleBackground<<m_pictureFrame.outlineOuterBackground;
+    for(const auto &point:m_points)stream<<point.pos<<point.disparity<<point.isCurve<<point.cp1<<point.cp2<<point.cp1Disparity<<point.cp2Disparity;
+    auto &cachedKey=right ? m_outlineKeyRight : m_outlineKeyLeft;
+    auto &cached=right ? m_outlineCacheRight : m_outlineCacheLeft;
+    if(cachedKey!=key || cached.isNull()) {
+        cached=outlineFrameOverlay(source.size(),m_points,right,openingMask(right),m_pictureFrame,m_maskColor);cachedKey=key;
+    }
+    return cached;
+}
+
+QImage StereoViewWidget::outlineFrameOverlay(QSize size,const QVector<MaskPoint> &points,bool right,
+                                             const QImage &opening,const PictureFrameSettings &settings,const QColor &background)
+{
+    QImage layer(size,QImage::Format_ARGB32_Premultiplied);layer.fill(Qt::transparent);
+    if(!settings.outlineEnabled || points.size()<3 || opening.size()!=size)return layer;
+    const auto path=createImageMaskPath(points,QRectF(QPointF(),QSizeF(size)),1.0f,right,false);
+    const auto outside=[&](double distance) {
+        if(distance<=0)return QPainterPath();
+        QPainterPathStroker stroke;stroke.setWidth(2*distance);stroke.setJoinStyle(Qt::MiterJoin);
+        return stroke.createStroke(path).subtracted(path);
+    };
+    QPainter painter(&layer);painter.setRenderHint(QPainter::Antialiasing);
+    double distance=qBound(0,settings.outlineOffset,1000);
+    const auto band=[&](int width,const QColor &color,bool useBackground) {
+        width=qBound(0,width,1000);if(!width)return;
+        painter.fillPath(outside(distance+width).subtracted(outside(distance)),useBackground ? background : color);
+        distance+=width;
+    };
+    band(settings.outlineInnerWidth,settings.outlineInnerColor,settings.outlineInnerBackground);
+    band(settings.outlineMiddleWidth,settings.outlineMiddleColor,settings.outlineMiddleBackground);
+    band(settings.outlineOuterWidth,settings.outlineOuterColor,settings.outlineOuterBackground);
+    painter.setCompositionMode(QPainter::CompositionMode_DestinationOut);painter.drawImage(0,0,opening);
+    return layer;
+}
+
 QImage StereoViewWidget::pictureFrameOverlay(QSize size, const QVector<MaskPoint> &points, bool right,
                                              const QImage &opening, const PictureFrameSettings &settings)
 {
@@ -3205,7 +3319,7 @@ class PictureFrameCommand : public QUndoCommand {
     StereoViewWidget *m_view;PictureFrameSettings m_before,m_after;
 public:
     PictureFrameCommand(StereoViewWidget *view,const PictureFrameSettings &next)
-        :m_view(view),m_before(view->pictureFrameSettings()),m_after(next){setText(QObject::tr("Change picture frame"));}
+        :m_view(view),m_before(view->pictureFrameSettings()),m_after(next){setText(QObject::tr("Change frame appearance"));}
     void undo() override {m_view->applyPictureFrameSettings(m_before);}
     void redo() override {m_view->applyPictureFrameSettings(m_after);}
 };
@@ -3217,12 +3331,16 @@ void StereoViewWidget::setPictureFrameSettings(const PictureFrameSettings &setti
     auto next=settings;next.shadowOpacity=qBound(0,next.shadowOpacity,100);next.shadowDistance=qBound(0,next.shadowDistance,1000);
     next.shadowBlur=qBound(0,next.shadowBlur,200);next.shadowSpread=qBound(0,next.shadowSpread,200);next.shadowAngle=qBound(0,next.shadowAngle,359);
     next.width=qBound(1,next.width,1000);next.style=qBound(0,next.style,2);
+    next.outlineOffset=qBound(0,next.outlineOffset,1000);
+    next.outlineInnerWidth=qBound(0,next.outlineInnerWidth,1000);next.outlineMiddleWidth=qBound(0,next.outlineMiddleWidth,1000);next.outlineOuterWidth=qBound(0,next.outlineOuterWidth,1000);
+    if(!next.outlineInnerColor.isValid() || !next.outlineMiddleColor.isValid() || !next.outlineOuterColor.isValid())return;
     if(!next.color.isValid())return;
     if (!(next==m_pictureFrame)) m_undoStack->push(new PictureFrameCommand(this,next));
 }
 
 void StereoViewWidget::applyPictureFrameSettings(const PictureFrameSettings &settings)
 {
+    if(!settings.outlineEnabled)clearOutlineCache();
     m_pictureFrame=settings;updateAnaglyphIfActive();update();if(m_autoSave)saveProject();
 }
 

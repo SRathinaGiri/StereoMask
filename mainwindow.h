@@ -51,6 +51,8 @@ private slots:
     void setupKeyboardShortcuts();
     void startGuidedProcess();
     void adjustPictureFrame();
+    void adjustOutlineFrame();
+    void adjustGrid();
     void createFrameShape();
     void editStereoText();
     void adjustStereoWindow();

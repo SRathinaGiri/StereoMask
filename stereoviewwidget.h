@@ -15,6 +15,13 @@
 class QTimer;
 class QJsonObject;
 class QKeyEvent;
+class QPainter;
+
+struct GridSettings {
+    bool enabled=false, twoColors=false;
+    int horizontal=10, vertical=10, opacity=70;
+    QColor first=QColor("#808080"), second=Qt::black;
+};
 
 struct PictureFrameSettings {
     bool enabled = false;
@@ -24,11 +31,20 @@ struct PictureFrameSettings {
     bool shadowEnabled = false;
     int shadowOpacity = 60, shadowDistance = 24, shadowAngle = 45, shadowBlur = 12, shadowSpread = 0;
     QColor shadowColor = Qt::black;
+    bool outlineEnabled=false, outlineDisplay=true;
+    int outlineOffset=20;
+    int outlineInnerWidth=5, outlineMiddleWidth=10, outlineOuterWidth=5;
+    QColor outlineInnerColor=QColor("#c0c0c0"), outlineMiddleColor=QColor("#808080"), outlineOuterColor=QColor("#c0c0c0");
+    bool outlineInnerBackground=false, outlineMiddleBackground=false, outlineOuterBackground=false;
     bool operator==(const PictureFrameSettings &other) const {
         return enabled == other.enabled && width == other.width && style == other.style && color == other.color &&
                shadowEnabled == other.shadowEnabled && shadowOpacity == other.shadowOpacity &&
                shadowDistance == other.shadowDistance && shadowAngle == other.shadowAngle &&
-               shadowBlur == other.shadowBlur && shadowSpread == other.shadowSpread && shadowColor == other.shadowColor;
+               shadowBlur == other.shadowBlur && shadowSpread == other.shadowSpread && shadowColor == other.shadowColor &&
+               outlineEnabled==other.outlineEnabled && outlineDisplay==other.outlineDisplay && outlineOffset==other.outlineOffset &&
+               outlineInnerWidth==other.outlineInnerWidth && outlineMiddleWidth==other.outlineMiddleWidth && outlineOuterWidth==other.outlineOuterWidth &&
+               outlineInnerColor==other.outlineInnerColor && outlineMiddleColor==other.outlineMiddleColor && outlineOuterColor==other.outlineOuterColor &&
+               outlineInnerBackground==other.outlineInnerBackground && outlineMiddleBackground==other.outlineMiddleBackground && outlineOuterBackground==other.outlineOuterBackground;
     }
 };
 
@@ -57,6 +73,9 @@ class StereoViewWidget : public QWidget
     Q_OBJECT
 public:
     explicit StereoViewWidget(QWidget *parent = nullptr);
+    GridSettings gridSettings() const { return m_grid; }
+    void setGridSettings(GridSettings settings);
+    static void paintAlignmentGrid(QPainter &painter,const QRectF &imageRect,const GridSettings &settings);
 
     PictureFrameSettings pictureFrameSettings() const { return m_pictureFrame; }
     void setPictureFrameSettings(const PictureFrameSettings &settings);
@@ -67,6 +86,8 @@ public:
                                  int padx, int pady, int gap, const QColor &background);
     static QImage shadowOverlay(QSize size,const QVector<MaskPoint> &points,bool right,
                                 const QImage &opening,const PictureFrameSettings &settings);
+    static QImage outlineFrameOverlay(QSize size,const QVector<MaskPoint> &points,bool right,
+                                     const QImage &opening,const PictureFrameSettings &settings,const QColor &background);
     int stereoWindowOffset() const { return m_processor.stereoWindowOffset(); }
     QImage stereoWindowPreview(int pixels, bool anaglyph = true) const { return m_processor.stereoWindowPreview(pixels, anaglyph, m_swapSides); }
     void setStereoWindowOffset(int pixels);
@@ -100,7 +121,7 @@ public:
     int cutoutBackground() const { return m_cutoutBackground; }
     QImage revealMask(bool right) const { return right ? m_revealRight : m_revealLeft; }
     QImage openingMask(bool right, int feather = 0) const;
-    QImage exportEye(bool right, bool includeText = true) const;
+    QImage exportEye(bool right, bool includeText = true, bool editor = false) const;
     QVector<StereoText> textObjects() const { return m_textObjects; }
     void setTextObjects(const QVector<StereoText> &texts);
     void applyTextObjects(const QVector<StereoText> &texts);
@@ -221,6 +242,7 @@ signals:
     void curveSelectionChanged(bool hasCurveSelection);
     void maskEmptyChanged(bool isEmpty);
     void freehandModeChanged(bool enabled);
+    void gridSettingsChanged();
 
 public:
     // Internal methods for Undo Commands
@@ -355,6 +377,7 @@ private:
     QString m_lastError;
 
     PictureFrameSettings m_pictureFrame;
+    GridSettings m_grid;
     QVector<StereoText> m_textObjects;
     QColor m_maskColor = Qt::black;
     float m_maskOpacity = 0.6f;
@@ -364,6 +387,10 @@ private:
     bool m_cleanPreviewEnabled = false;
     mutable QByteArray m_exportKeyLeft,m_exportKeyRight;
     mutable QImage m_exportCacheLeft,m_exportCacheRight;
+    QImage cachedOutlineFrame(bool right) const;
+    void clearOutlineCache() { m_outlineKeyLeft.clear();m_outlineKeyRight.clear();m_outlineCacheLeft=QImage();m_outlineCacheRight=QImage(); }
+    mutable QByteArray m_outlineKeyLeft,m_outlineKeyRight;
+    mutable QImage m_outlineCacheLeft,m_outlineCacheRight;
     QByteArray textOverlayKey(bool right) const;
     QImage cachedTextOverlay(bool right) const;
     mutable QByteArray m_textKeyLeft,m_textKeyRight;

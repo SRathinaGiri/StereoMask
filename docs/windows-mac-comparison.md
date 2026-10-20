@@ -1,6 +1,6 @@
 # Windows v2.1.1 vs Mac R10: Comparison and Porting Checklist
 
-Historical comparison only. For the current Windows v2.4.1 delta against fetched Mac R20, use [Windows-to-Mac Handoff](windows-to-mac-handoff.md). Mac R19 has adopted the principal Windows v2.3.0 additions; do not treat the R10-only omissions below as omissions in Mac R20.
+Historical comparison only. For the current Windows v2.5.0 delta against fetched Mac R20, use [Windows-to-Mac Handoff](windows-to-mac-handoff.md). Mac R19 has adopted the principal Windows v2.3.0 additions; do not treat the R10-only omissions below as omissions in Mac R20.
 
 ## Verified Baseline
 

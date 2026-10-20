@@ -1,10 +1,10 @@
-# Windows v2.4.1 to Mac R20 Handoff
+# Windows v2.5.0 to Mac R20 Handoff
 
 ## Verified Baselines
 
 Compared on **2026-10-20** against fetched Mac `origin/main`: **R20 / 2.3.1**, commit [425f403755e8085973a58ef95052188ceef60017](https://github.com/TedInVR/StereoMask-Mac/commit/425f403755e8085973a58ef95052188ceef60017). R19 is [4003062b4e164d800f00aba4ba9d74f40f7d3f07](https://github.com/TedInVR/StereoMask-Mac/commit/4003062b4e164d800f00aba4ba9d74f40f7d3f07). The Mac checkout was not modified; only remote references were fetched. No Mac build, signing or Finder-launch validation was performed.
 
-Windows source: [v2.4.1](https://github.com/SRathinaGiri/StereoMask/tree/v2.4.1). Its release includes a Windows package and a Mac Handoff ZIP with this guide, release notes, changed source files, and the Windows v2.3.0-to-v2.4.1 patch. This is a review aid, not a patch to apply blindly over Mac-specific files.
+Windows source: [v2.5.0](https://github.com/SRathinaGiri/StereoMask/tree/v2.5.0). Its release includes a Windows package and a Mac Handoff ZIP with this guide, release notes, changed source files, and the Windows v2.3.0-to-v2.5.0 patch. This is a review aid, not a patch to apply blindly over Mac-specific files. A fresh fetch on 2026-10-20 confirmed that Mac R20 remains the tip.
 
 The [previous v2.3.0 handoff](https://github.com/SRathinaGiri/StereoMask/blob/v2.3.0/docs/windows-to-mac-handoff.md) remains historical. Mac R19 has now integrated its principal Windows color-selection, alignment, frame-ordering, text-relief/tilt, processing-feedback and version-constant additions. Do not describe those as still missing from Mac R20.
 
@@ -47,6 +47,20 @@ appversion.h supplies the runtime version and CMake project metadata. The User G
 
 MainWindow sets its versioned title from the constant. Tests inspect the actual splash label, title, About, embedded HTML and cache URL. Mac should preserve its own revision label and platform-specific cache location while using its appversion.h for numeric version text. Publication metadata such as historical release notes and updater URLs remains separate from runtime version displays.
 
+### 4. Alignment grid (v2.5.0)
+
+GridSettings and StereoViewWidget::paintAlignmentGrid provide source-image-aligned grids. Independent horizontal/vertical line counts are bounded to 0-100; zero omits that axis. Lines are interior divisions at i/(count+1). Cosmetic screen-space strokes remain readable while the image-coordinate origin and spacing follow shared pan/zoom. Optional second-color dashed segments provide contrast over the first solid color. Opacity is 0-100.
+
+Render grids after the eye image but before editing handles, clipped to the image/viewport; do not put them in exportEye or the composed anaglyph pixels. Anaglyph receives the same editor overlay once. Clean Preview skips the grid. Grid changes are not document Undo commands and do not change .msk data. workspace/grid/* keys in layout.ini store enabled, twoColors, horizontal, vertical, opacity and the first/second colors. Mac may adapt the shortcut and preferences location; Windows uses Ctrl+G.
+
+### 5. Three-band outline frames (v2.5.0)
+
+PictureFrameSettings now includes optional outline fields. The outline is independent of the existing border/shadow enable flags but uses the same undoable frame-settings command. Offset is an exterior gap from the base frame contour; inner/middle/outer widths are successive exterior bands. Each offset/width is bounded to 0-1000 source pixels; zero-width bands are skipped. The renderer uses each eye's curved/disparity-aware path and removes the ordered opening mask from the outline, allowing preserved foreground to cover it. It does not expand the source canvas or export padding.
+
+Persist under pictureFrame/outline: enabled (default false), displayInEditor (true), offset (20), and inner/middle/outer objects containing width (5/10/5), color (ARGB), and useMaskColor (false). Use mask color follows the mask QColor, not the custom cutout color or mask-opacity setting. Invalid JSON values are bounded/defaulted. Keep backups when round-tripping through older readers, which may discard these fields.
+
+exportEye gains an optional editor flag, default false for output. Normal editing respects displayInEditor; Clean Preview and export always include applied outlines. Apply/Cancel and Restore Defaults are exposed by workspacecontrols.cpp. Per-eye outline caches key image identity, geometry/disparities, foreground revision/masks, band settings and mask color. Clear caches on document changes; zoom/pan should reuse them. Foreground, color, geometry and Undo changes must invalidate correctly.
+
 ## Source Map
 
 | File | Responsibility |
@@ -54,6 +68,8 @@ MainWindow sets its versioned title from the constant. Tests inspect the actual 
 | mainwindow.cpp/.h | Icon rail, drawers, accordion/floating behavior, layout persistence, viewport-width control, command catalog/context menus and existing handler integration |
 | quickaccess.cpp/.h | Favorites, command registration, context menus, searchable draft manager, ordering and QSettings persistence |
 | CMakeLists.txt | Compile Quick Access and its focused test target |
+| workspacecontrols.cpp, mainwindow.h/.cpp | Grid/outline dialogs, workspace persistence, View/Edit Frame actions and Quick Access registration |
+| stereoviewwidget.h/.cpp | Grid paint routing, outline settings/JSON/rendering/cache, editor-vs-output composition and existing frame Undo integration |
 | operationprogress.h | Reviewed lifetime/reentry fix; Mac R19 already has the corresponding implementation |
 | stereoviewwidget.cpp | Reviewed malformed-text and cache-cleanup fixes; preserve Windows diagonal connectivity |
 | appversion.h, updates.json | Windows runtime version and publication metadata; retain Mac's own destinations |
@@ -73,3 +89,5 @@ MainWindow sets its versioned title from the constant. Tests inspect the actual 
 6. Preserve Mac's already adopted color/text/progress features and its platform-specific navigation defaults. Mac physical keys, fonts, Apple Silicon packaging, signing, relocation and Finder launch need native verification.
 
 Five Windows CTest suites cover these areas. Synthetic tests do not certify segmentation quality or native Mac deployment. Bernd Paksa/Stereomasken, Subbiah Rathinagiri and Theodore Whitten retain their existing creative/development credits; MIT licensing and dependency notices remain unchanged.
+
+For the v2.5.0 additions, also verify grid clipping and aligned pan/zoom in both eyes, one/two-color contrast, no exported grid pixels, Clean Preview, preference restoration and dialog cancellation. Verify outline gaps/bands, zero widths, curves, disparity, foreground cutouts, mask-color changes, cache invalidation, Undo/Redo and project reload. Older projects must keep outlines disabled unless explicitly enabled. Run native Mac UI/font/key/deployment checks separately.

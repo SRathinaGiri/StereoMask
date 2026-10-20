@@ -396,6 +396,36 @@ int main(int argc, char **argv) {
     for(const QString &name:QStringList{"File","View","Stereo Window","Create Frame","Edit Frame","Out-of-Frame","History","Layout","Help","Guided Process","Check for Updates…","About"})
         if(!menuNames.contains(name)) return 43;
     bool shortcutText=false;
+    auto showGrid=window.findChild<QAction *>("showGridAction");auto gridSettings=window.findChild<QAction *>("gridSettingsAction");
+    auto outlineAction=window.findChild<QAction *>("outlineFrameAction");
+    if(!showGrid || !gridSettings || !outlineAction || !showGrid->isCheckable() || showGrid->shortcut()!=QKeySequence(Qt::CTRL|Qt::Key_G))return 68;
+    const auto previousGrid=view->gridSettings();bool gridWired=false;
+    QTimer::singleShot(0,&window,[&] {
+        auto dialog=window.findChild<QDialog *>("gridSettingsDialog");if(!dialog)return;
+        auto enabled=dialog->findChild<QCheckBox *>("gridEnabled");auto horizontal=dialog->findChild<QSpinBox *>("gridHorizontal");
+        auto vertical=dialog->findChild<QSpinBox *>("gridVertical");auto mode=dialog->findChild<QComboBox *>("gridColorMode");
+        gridWired=enabled && horizontal && vertical && mode;
+        if(gridWired){enabled->setChecked(true);horizontal->setValue(6);vertical->setValue(8);mode->setCurrentIndex(1);dialog->grab().save("windows-grid-settings-ui.png");dialog->accept();}else dialog->reject();
+    });
+    gridSettings->trigger();
+    if(!gridWired || !showGrid->isChecked() || view->gridSettings().horizontal!=6 || !view->gridSettings().twoColors)return 68;
+    QTimer::singleShot(0,&window,[&]{auto dialog=window.findChild<QDialog *>("gridSettingsDialog");if(dialog){dialog->findChild<QSpinBox *>("gridHorizontal")->setValue(99);dialog->reject();}});
+    gridSettings->trigger();if(view->gridSettings().horizontal!=6)return 68;
+    QApplication::processEvents();if(!window.grab().save("windows-alignment-grid-ui.png"))return 68;
+    view->setGridSettings(previousGrid);
+    const auto previousFrame=view->pictureFrameSettings();bool outlineWired=false;
+    QTimer::singleShot(0,&window,[&] {
+        auto dialog=window.findChild<QDialog *>("outlineFrameDialog");if(!dialog)return;
+        auto enabled=dialog->findChild<QCheckBox *>("outlineEnabled");auto offset=dialog->findChild<QSpinBox *>("outlineOffset");
+        auto inner=dialog->findChild<QSpinBox *>("outlineInnerWidth");auto middle=dialog->findChild<QSpinBox *>("outlineMiddleWidth");auto outer=dialog->findChild<QSpinBox *>("outlineOuterWidth");
+        outlineWired=enabled && offset && inner && middle && outer;
+        if(outlineWired){enabled->setChecked(true);offset->setValue(4);inner->setValue(2);middle->setValue(3);outer->setValue(2);dialog->grab().save("windows-outline-settings-ui.png");dialog->accept();}else dialog->reject();
+    });
+    outlineAction->trigger();if(!outlineWired || !view->pictureFrameSettings().outlineEnabled || view->pictureFrameSettings().outlineOffset!=4)return 68;
+    QTimer::singleShot(0,&window,[&]{auto dialog=window.findChild<QDialog *>("outlineFrameDialog");if(dialog){dialog->findChild<QSpinBox *>("outlineOffset")->setValue(99);dialog->reject();}});
+    outlineAction->trigger();if(view->pictureFrameSettings().outlineOffset!=4)return 68;
+    QApplication::processEvents();if(!window.grab().save("windows-outline-frame-ui.png"))return 68;
+    view->setPictureFrameSettings(previousFrame);
     QTimer::singleShot(0,[&]{auto dialog=window.findChild<QDialog *>("keyboardShortcutsDialog");if(!dialog)return;auto browser=dialog->findChild<QTextBrowser *>();shortcutText=browser && browser->toPlainText().contains("Ctrl") && browser->toPlainText().contains("Alt");dialog->reject();});
     keys->trigger();if(!shortcutText)return 44;
     bool effectsWired=false,textApplyFeedback=false;
@@ -429,6 +459,8 @@ int main(int argc, char **argv) {
         QSettings preferences(QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("layout.ini"),QSettings::IniFormat);
         const auto previous=preferences.value("quickAccess/commands");
         quickAccess->addCommand("view.fit");quickAccess->addCommand("view.pan");quickAccess->addCommand("applyLassoAction");quickAccess->addCommand("selection.combo0.option3");
+        quickAccess->addCommand("showGridAction");quickAccess->addCommand("outlineFrameAction");
+        if(!quickAccess->commandIds().contains("showGridAction") || !quickAccess->commandIds().contains("outlineFrameAction"))return 68;
         quickToggle->trigger();QApplication::processEvents();
         if(!quickDrawer->isVisible() || selectionDrawer->isVisible())return 65;
         auto panButton=quickAccess->findChild<QToolButton *>("quickAccessCommand_view.pan");
@@ -450,13 +482,17 @@ int main(int argc, char **argv) {
     if(!window.grab().save("windows-toolbox-small-ui.png"))return 63;
     QSettings layoutSettings(QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("layout.ini"),QSettings::IniFormat);
     const QVariant previousLayout=layoutSettings.value("drawerLayout/state");
+    auto persistentGrid=view->gridSettings();persistentGrid.horizontal=7;persistentGrid.vertical=9;persistentGrid.twoColors=true;persistentGrid.opacity=61;
+    view->setGridSettings(persistentGrid);
     window.close();
     {
         MainWindow restored;restored.resize(900,650);restored.show();QApplication::processEvents();
+        auto restoredView=restored.findChild<StereoViewWidget *>();
+        if(!restoredView || restoredView->gridSettings().horizontal!=7 || restoredView->gridSettings().vertical!=9 || !restoredView->gridSettings().twoColors || restoredView->gridSettings().opacity!=61)return 68;
         auto selected=restored.findChild<QDockWidget *>("controlDrawer5");
         auto restoredRail=restored.findChild<QToolBar *>("compactControls");
         if(!selected || !selected->isVisible() || restored.dockWidgetArea(selected)!=Qt::LeftDockWidgetArea || restored.toolBarArea(restoredRail)!=Qt::LeftToolBarArea){std::cerr<<"Restore drawer visible="<<(selected && selected->isVisible())<<" area="<<restored.dockWidgetArea(selected)<<" rail="<<restored.toolBarArea(restoredRail)<<" saved="<<layoutSettings.value("drawerLayout/state").toByteArray().size()<<'\n';for(auto d:restored.findChildren<QDockWidget *>())std::cerr<<d->objectName().toStdString()<<" hidden="<<d->isHidden()<<'\n';return 63;}
-        restored.close();
+        restoredView->setGridSettings(previousGrid);restored.close();
     }
     if(previousLayout.isValid())layoutSettings.setValue("drawerLayout/state",previousLayout);else layoutSettings.remove("drawerLayout/state");
     QDesktopServices::unsetUrlHandler("file");
